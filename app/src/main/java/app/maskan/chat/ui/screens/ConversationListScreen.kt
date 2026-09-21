@@ -148,6 +148,8 @@ fun ConversationListScreen(
     var folderToRename by remember { mutableStateOf<FolderEntity?>(null) }
     var folderToDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
     var folderToRecolor by remember { mutableStateOf<FolderEntity?>(null) }
+    // Debug builds only - the scratch editor for the 2.6 folder spine. See DebugFolderFilesDialog.
+    var folderToEditFiles by remember { mutableStateOf<FolderEntity?>(null) }
     var conversationToMove by remember { mutableStateOf<ConversationEntity?>(null) }
     val expandedFolders = remember { mutableStateMapOf<Long?, Boolean>() }
 
@@ -374,6 +376,12 @@ fun ConversationListScreen(
                                     text = { Text(stringResource(R.string.delete_folder)) },
                                     onClick = { showMenu = false; folderToDeleteId = folder.id }
                                 )
+                                if (app.maskan.chat.BuildConfig.DEBUG) {
+                                    DropdownMenuItem(
+                                        text = { Text("Project files (debug)") },
+                                        onClick = { showMenu = false; folderToEditFiles = folder }
+                                    )
+                                }
                             }
                         }
                     }
@@ -449,6 +457,21 @@ fun ConversationListScreen(
                 }
             }
         )
+    }
+
+    folderToEditFiles?.let { folder ->
+        if (app.maskan.chat.BuildConfig.DEBUG) {
+            DebugFolderFilesDialog(
+                folderName = folder.name,
+                instructions = folder.instructions.orEmpty(),
+                memory = folder.memory.orEmpty(),
+                onDismiss = { folderToEditFiles = null },
+                onSave = { instructions, memory ->
+                    viewModel.setFolderFiles(folder.id, instructions, memory)
+                    folderToEditFiles = null
+                }
+            )
+        }
     }
 
     folderToRecolor?.let { folder ->

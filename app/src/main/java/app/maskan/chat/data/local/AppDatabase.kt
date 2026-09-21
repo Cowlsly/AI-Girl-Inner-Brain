@@ -10,7 +10,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
     entities = [ConversationEntity::class, MessageEntity::class, FolderEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -50,6 +50,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * 2.6: a folder becomes a project. Two nullable TEXT columns, no data rewrite, so an
+         * upgrade over a database full of real chats is two ALTERs and nothing else.
+         *
+         * Hand-written rather than a destructive fallback on purpose - the fallback would drop
+         * every conversation on the phone, and this database is the only copy there is.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE folders ADD COLUMN instructions TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE folders ADD COLUMN memory TEXT DEFAULT NULL")
+            }
+        }
+
         fun getInstance(context: Context, passphrase: ByteArray): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val factory = SupportOpenHelperFactory(passphrase)
@@ -59,7 +73,9 @@ abstract class AppDatabase : RoomDatabase() {
                     "privacyai_database"
                 )
                     .openHelperFactory(factory)
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(
+                        MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8
+                    )
                     .build()
                 INSTANCE = instance
                 instance

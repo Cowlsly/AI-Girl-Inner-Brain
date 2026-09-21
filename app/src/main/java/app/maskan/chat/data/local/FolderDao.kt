@@ -21,6 +21,16 @@ interface FolderDao {
     @Query("UPDATE folders SET colorHex = :colorHex WHERE id = :id")
     suspend fun updateColor(id: Long, colorHex: String)
 
+    /** One-shot read on the send path: the instructions must be the CURRENT ones, every time. */
+    @Query("SELECT * FROM folders WHERE id = :id")
+    suspend fun getById(id: Long): FolderEntity?
+
+    @Query("UPDATE folders SET instructions = :text WHERE id = :id")
+    suspend fun updateInstructions(id: Long, text: String?)
+
+    @Query("UPDATE folders SET memory = :text WHERE id = :id")
+    suspend fun updateMemory(id: Long, text: String?)
+
     @Query("DELETE FROM folders WHERE id = :id")
     suspend fun delete(id: Long)
 

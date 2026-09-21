@@ -1,6 +1,7 @@
 package app.maskan.chat.data.repository
 
 import android.util.Base64
+import app.maskan.chat.BuildConfig
 import app.maskan.chat.data.local.ConversationDao
 import app.maskan.chat.data.local.ConversationEntity
 import app.maskan.chat.data.local.FolderDao
@@ -15,6 +16,7 @@ import app.maskan.chat.data.remote.VideoBackend
 import app.maskan.chat.data.remote.VideoJobClient
 import app.maskan.chat.data.remote.providers.ProviderRegistry
 import app.maskan.chat.util.ImageStore
+import app.maskan.chat.util.TokenEstimate
 import app.maskan.chat.video.VideoJobs
 import app.maskan.chat.video.VideoOptions
 import app.maskan.chat.video.VideoRenderWorker
@@ -116,6 +118,16 @@ class ChatRepository(
         folderDao.updateColor(id, colorHex)
     }
 
+    suspend fun getFolder(id: Long): FolderEntity? = folderDao.getById(id)
+
+    suspend fun updateFolderInstructions(id: Long, text: String?) {
+        folderDao.updateInstructions(id, text?.takeIf { it.isNotBlank() })
+    }
+
+    suspend fun updateFolderMemory(id: Long, text: String?) {
+        folderDao.updateMemory(id, text?.takeIf { it.isNotBlank() })
+    }
+
     suspend fun deleteFolder(id: Long) {
         folderDao.delete(id)
     }
@@ -203,7 +215,7 @@ class ChatRepository(
 
             userMessageId = saveMessage(conversationId, "user", userContent)
 
-            val messages = buildMessageList(conversationId)
+            val messages = buildMessageList(conversation)
 
             val providerId = conversation.providerId
             val provider = ProviderRegistry.getProvider(providerId)
@@ -724,7 +736,7 @@ class ChatRepository(
         imageMimeType: String?
     ) {
         val conversationId = conversation.id
-        val messages = buildMessageList(conversationId)
+        val messages = buildMessageList(conversation)
 
         val providerId = conversation.providerId
         val provider = ProviderRegistry.getProvider(providerId)
@@ -898,18 +910,83 @@ class ChatRepository(
         }
     }
 
-    private suspend fun buildMessageList(conversationId: Long): List<Message> {
-        val entities = messageDao.getMessagesForConversationOnce(conversationId)
+    /**
+     * What this conversation's folder contributes to the system role, or null when it
+     * contributes nothing.
+     *
+     * Read fresh on EVERY request. A preset is injected once, as a message row, which is why
+     * editing a preset does nothing for a chat that already started; project instructions must
+     * behave the opposite way - edit the text, and the chat opened last week obeys it on its
+     * next message. Nothing here is ever written to the conversation.
+     */
+    private suspend fun projectSystemText(conversation: ConversationEntity): String? {
+        val folderId = conversation.folderId ?: return null
+        val folder = folderDao.getById(folderId) ?: return null
+        val instructions = folder.instructions?.trim().orEmpty()
+        val memory = folder.memory?.trim().orEmpty()
+        if (instructions.isEmpty() && memory.isEmpty()) return null
+
+        return buildString {
+            if (instructions.isNotEmpty()) {
+                append("### Project instructions")
+                append("\n")
+                append(instructions)
+            }
+            if (memory.isNotEmpty()) {
+                if (isNotEmpty()) append("\n\n")
+                append("### What you know about me")
+                append("\n")
+                append(memory)
+            }
+        }
+    }
+
+    private suspend fun buildMessageList(conversation: ConversationEntity): List<Message> {
+        val entities = messageDao.getMessagesForConversationOnce(conversation.id)
         val messages = entities.map { Message(role = it.role, text = it.content) }
 
         val systemMessages = messages.filter { it.role == "system" }
         val nonSystemMessages = messages.filter { it.role != "system" }
         val recentMessages = nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
 
-        return systemMessages + recentMessages
+        val project = projectSystemText(conversation)
+        // A chat outside a folder, or in a folder with both files empty, must send EXACTLY what
+        // 2.5.0 sent. Not nearly - exactly: this is the line that keeps the new feature from
+        // quietly changing every existing conversation in the app.
+        if (project == null) return systemMessages + recentMessages
+
+        // One system message, always. The preset's row stays in the database (it is the user's
+        // record of what this chat was set up as) but it is REPLACED in the outgoing request by
+        // the assembled text: Anthropic and Gemini fold multiple system messages into one field
+        // anyway, and an OpenAI-shaped provider would otherwise receive two, which is the 2.5
+        // trap that rejected calls outright.
+        val preset = systemMessages.joinToString("\n") { it.content.textContent() }.trim()
+        val assembled = TokenEstimate.clamp(
+            if (preset.isEmpty()) project else preset + "\n\n" + project,
+            MAX_SYSTEM_TOKENS
+        )
+
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "Maskan",
+                "system assembled for conv=" + conversation.id + " folder=" + conversation.folderId +
+                    " preset=" + preset.length + "ch project=" + project.length +
+                    "ch sent=" + assembled.length + "ch ~" + TokenEstimate.of(assembled) + "tok"
+            )
+        }
+
+        return listOf(Message(role = "system", text = assembled)) + recentMessages
     }
 
     companion object {
         const val MAX_CONTEXT_MESSAGES = 50
+
+        /**
+         * The ceiling on assembled system text. An Ollama model with a 4k window given 3,000
+         * tokens of instructions has its HISTORY silently truncated by the server instead, and
+         * the user sees a model that forgot the conversation rather than one that was told too
+         * much. The editor's red meter warns long before this; this is the backstop.
+         */
+        const val MAX_SYSTEM_TOKENS = 6000
     }
 }
