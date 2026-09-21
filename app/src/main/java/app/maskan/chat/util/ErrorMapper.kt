@@ -3,6 +3,7 @@ package app.maskan.chat.util
 import android.content.Context
 import app.maskan.chat.R
 import app.maskan.chat.data.remote.ApiHttpException
+import app.maskan.chat.data.remote.VideoJobClient
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -25,6 +26,10 @@ object ErrorMapper {
             is SocketTimeoutException -> context.getString(R.string.error_timeout)
             is SerializationException -> context.getString(R.string.error_serialization)
             is SSLException -> context.getString(R.string.error_ssl)
+            // JobGone is an IOException by inheritance - it is thrown from the wire layer - but
+            // it is a 404 from a server that plainly answered. Without this line it falls through
+            // to "No internet", the exact wrong sentence, and the one plan 1.3 is about.
+            is VideoJobClient.JobGone -> context.getString(R.string.video_job_lost)
             is java.io.IOException -> context.getString(R.string.error_no_internet)
             else -> mapByMessage(context, throwable)
         }

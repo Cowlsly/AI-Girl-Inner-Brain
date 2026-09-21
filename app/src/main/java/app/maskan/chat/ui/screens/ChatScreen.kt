@@ -198,6 +198,10 @@ fun ChatScreen(
     ) { }
 
     var showComposeSheet by remember { mutableStateOf(false) }
+    // Plan 1.4: the two pickers the + menu opens. Hosted here, next to the other dialogs, so the
+    // menu can close before one appears.
+    var showImageModelPicker by remember { mutableStateOf(false) }
+    var showVideoModelPicker by remember { mutableStateOf(false) }
 
     // Held between arming the Save picker and the picker returning: the SAF contract hands back
     // only a destination, so the bytes have to wait somewhere.
@@ -263,6 +267,43 @@ fun ChatScreen(
                 showComposeSheet = false
             },
             onDismiss = { showComposeSheet = false }
+        )
+    }
+
+    // The same dialog Settings uses, on the same two preferences. No verification pass: checking
+    // an image model means drawing a real, paid picture on every tap.
+    if (showImageModelPicker) {
+        ModelPickerDialog(
+            models = viewModel.imageModelChoices(),
+            visionModels = emptySet(),
+            verifiedModels = emptySet(),
+            freeModels = viewModel.freeModels(),
+            selectedModel = uiState.selectedImageModelName,
+            onSelect = { model ->
+                viewModel.selectImageModel(model)
+                showImageModelPicker = false
+            },
+            onDismiss = { showImageModelPicker = false },
+            allowCustom = true,
+            allowNone = true,
+            imageModels = viewModel.imageModelChoices().toSet()
+        )
+    }
+
+    if (showVideoModelPicker) {
+        ModelPickerDialog(
+            models = viewModel.videoModelChoices(),
+            visionModels = emptySet(),
+            verifiedModels = emptySet(),
+            freeModels = viewModel.freeModels(),
+            selectedModel = uiState.selectedVideoModelName,
+            onSelect = { model ->
+                viewModel.selectVideoModel(model)
+                showVideoModelPicker = false
+            },
+            onDismiss = { showVideoModelPicker = false },
+            allowCustom = true,
+            allowNone = true
         )
     }
 
@@ -421,7 +462,7 @@ fun ChatScreen(
                         )
                         VideoOptionChips(
                             providerId = uiState.selectedProviderId,
-                            model = viewModel.selectedVideoModel(),
+                            model = uiState.selectedVideoModelName,
                             size = uiState.videoSize,
                             seconds = uiState.videoSeconds,
                             onSize = { viewModel.setVideoSize(it) },
@@ -524,7 +565,11 @@ fun ChatScreen(
                             viewModel.setVideoMode(arming)
                         },
                         onExpandCompose = { showComposeSheet = true },
-                        preferenceRepository = preferenceRepository
+                        preferenceRepository = preferenceRepository,
+                        imageModelName = uiState.selectedImageModelName,
+                        videoModelName = uiState.selectedVideoModelName,
+                        onPickImageModel = { showImageModelPicker = true },
+                        onPickVideoModel = { showVideoModelPicker = true }
                     )
                 }
             }
@@ -1068,7 +1113,12 @@ private fun MessageInputBar(
     videoMode: Boolean = false,
     onToggleVideoMode: () -> Unit = {},
     onExpandCompose: () -> Unit = {},
-    preferenceRepository: PreferenceRepository? = null
+    preferenceRepository: PreferenceRepository? = null,
+    /** Named under the generate entries so the current choice is visible where it is used. */
+    imageModelName: String = "",
+    videoModelName: String = "",
+    onPickImageModel: () -> Unit = {},
+    onPickVideoModel: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as MaskanApplication
@@ -1112,8 +1162,6 @@ private fun MessageInputBar(
             // are absent, not greyed; a generate entry without a chosen model is dimmed and says
             // where to choose one instead of dead-ending.
             var menuOpen by remember { mutableStateOf(false) }
-            val chooseImageModelFirst = stringResource(R.string.error_no_image_model)
-            val chooseVideoModelFirst = stringResource(R.string.error_no_video_model)
             val attachPhotoFirst = stringResource(R.string.error_no_photo_to_edit)
             val modelCannotSee = stringResource(R.string.model_cannot_see_images)
             Box {
@@ -1153,14 +1201,38 @@ private fun MessageInputBar(
                         }
                     )
                     if (imageFeatureAvailable) {
+                        // The model is named right here and changed right here. It used to be
+                        // four taps deep in Settings, which is not where the decision is made -
+                        // and with nothing chosen the entry now OPENS the picker instead of
+                        // telling the user to go elsewhere and do it.
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.attach_generate_image)) },
+                            text = {
+                                Column {
+                                    Text(stringResource(R.string.attach_generate_image))
+                                    Text(
+                                        text = imageModelName.ifBlank {
+                                            stringResource(R.string.model_picker_none)
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            },
                             leadingIcon = { Text("\uD83C\uDFA8", fontSize = 18.sp) },
+                            trailingIcon = {
+                                IconButton(onClick = { menuOpen = false; onPickImageModel() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = stringResource(R.string.change_model)
+                                    )
+                                }
+                            },
                             modifier = Modifier.alpha(if (canGenerateImages) 1f else 0.4f),
                             onClick = {
                                 menuOpen = false
-                                if (canGenerateImages) onToggleImageMode()
-                                else Toast.makeText(context, chooseImageModelFirst, Toast.LENGTH_LONG).show()
+                                if (canGenerateImages) onToggleImageMode() else onPickImageModel()
                             }
                         )
                     }
@@ -1178,13 +1250,33 @@ private fun MessageInputBar(
                     }
                     if (videoFeatureAvailable) {
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.attach_generate_video)) },
+                            text = {
+                                Column {
+                                    Text(stringResource(R.string.attach_generate_video))
+                                    Text(
+                                        text = videoModelName.ifBlank {
+                                            stringResource(R.string.model_picker_none)
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            },
                             leadingIcon = { Text("\uD83C\uDFAC", fontSize = 18.sp) },
+                            trailingIcon = {
+                                IconButton(onClick = { menuOpen = false; onPickVideoModel() }) {
+                                    Icon(
+                                        imageVector = Icons.Default.KeyboardArrowDown,
+                                        contentDescription = stringResource(R.string.change_model)
+                                    )
+                                }
+                            },
                             modifier = Modifier.alpha(if (canGenerateVideos) 1f else 0.4f),
                             onClick = {
                                 menuOpen = false
-                                if (canGenerateVideos) onToggleVideoMode()
-                                else Toast.makeText(context, chooseVideoModelFirst, Toast.LENGTH_LONG).show()
+                                if (canGenerateVideos) onToggleVideoMode() else onPickVideoModel()
                             }
                         )
                     }

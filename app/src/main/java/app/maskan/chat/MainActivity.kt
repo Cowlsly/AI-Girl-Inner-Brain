@@ -1,6 +1,7 @@
 package app.maskan.chat
 
 import android.app.LocaleManager
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -9,7 +10,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.ViewModelProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -34,6 +39,24 @@ class MainActivity : ComponentActivity() {
 
     private val app by lazy { application as MaskanApplication }
 
+    /**
+     * The conversation a notification asked for, waiting to be navigated to.
+     *
+     * Compose state rather than a nav call from onNewIntent: when the app is already running the
+     * tap arrives at an activity whose NavHost is long since composed, and the only safe place to
+     * navigate from is inside composition.
+     */
+    private var pendingConversationId by mutableStateOf<Long?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        conversationIdFrom(intent)?.let { pendingConversationId = it }
+    }
+
+    private fun conversationIdFrom(intent: Intent?): Long? =
+        intent?.getLongExtra(EXTRA_CONVERSATION_ID, -1L)?.takeIf { it > 0 }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -55,6 +78,8 @@ class MainActivity : ComponentActivity() {
         // hiding the Arabic-font layout bugs this theme flag exists to handle.
         val isArabic = resources.configuration.locales.get(0)?.language == "ar"
 
+        pendingConversationId = conversationIdFrom(intent)
+
         val isFirstLaunch = !app.preferenceRepository.hasCompletedSetup()
         val needsPrivacyIntro = !app.preferenceRepository.hasSeenPrivacyIntro()
         val onboardingInProgress = app.preferenceRepository.isOnboardingInProgress()
@@ -68,10 +93,17 @@ class MainActivity : ComponentActivity() {
                     onRestart = { recreate() },
                     isFirstLaunch = isFirstLaunch,
                     needsPrivacyIntro = needsPrivacyIntro,
-                    onboardingInProgress = onboardingInProgress
+                    onboardingInProgress = onboardingInProgress,
+                    deepLinkConversationId = pendingConversationId,
+                    onDeepLinkHandled = { pendingConversationId = null }
                 )
             }
         }
+    }
+
+    companion object {
+        /** Set by a "ready" notification so the tap lands in that chat, not on the list. */
+        const val EXTRA_CONVERSATION_ID = "conversationId"
     }
 }
 
@@ -83,7 +115,9 @@ private fun AppNavigation(
     onRestart: () -> Unit,
     isFirstLaunch: Boolean,
     needsPrivacyIntro: Boolean = false,
-    onboardingInProgress: Boolean = false
+    onboardingInProgress: Boolean = false,
+    deepLinkConversationId: Long? = null,
+    onDeepLinkHandled: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val startDestination = when {
@@ -93,6 +127,18 @@ private fun AppNavigation(
         // restart, so the "Start Chatting" button isn't lost when switching language mid-onboarding.
         onboardingInProgress -> Routes.SETTINGS + "?firstLaunch=true"
         else -> Routes.CONVERSATION_LIST
+    }
+
+    // A "Video ready" tap while the user is mid-onboarding would drop them into a chat with no
+    // key set and no way back to the setup they were in; the notification stays in the shade for
+    // them to find afterwards instead.
+    val deepLinkAllowed = startDestination == Routes.CONVERSATION_LIST
+    LaunchedEffect(deepLinkConversationId, deepLinkAllowed) {
+        val target = deepLinkConversationId
+        if (target != null && deepLinkAllowed) {
+            navController.navigate(Routes.chatRoute(target)) { launchSingleTop = true }
+            onDeepLinkHandled()
+        }
     }
 
     NavHost(

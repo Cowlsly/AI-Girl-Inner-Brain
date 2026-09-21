@@ -10,7 +10,9 @@
  */
 package app.maskan.chat
 
+import android.app.Activity
 import android.app.Application
+import android.os.Bundle
 import android.util.Log
 import app.maskan.chat.BuildConfig
 import app.maskan.chat.data.repository.createEncryptedPrefsOrFallback
@@ -166,8 +168,39 @@ class MaskanApplication : Application() {
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
+    private var startedActivities = 0
+
+    /**
+     * Whether any screen of ours is on display right now.
+     *
+     * Decides whether a finished picture needs a notification at all - on screen, the bubble IS
+     * the notification. Counted from ActivityLifecycleCallbacks rather than ProcessLifecycleOwner
+     * so it costs no dependency: lifecycle-process is a separate artifact and the app stays
+     * F-Droid-clean on the dependency list it already has.
+     */
+    val isInForeground: Boolean get() = startedActivities > 0
+
+    private fun trackForeground() {
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            override fun onActivityStarted(activity: Activity) {
+                startedActivities++
+            }
+
+            override fun onActivityStopped(activity: Activity) {
+                if (startedActivities > 0) startedActivities--
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityResumed(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
+    }
+
     override fun onCreate() {
         super.onCreate()
+        trackForeground()
         initDatabaseEncryption()
         applySavedLocale()
         registerProviders()

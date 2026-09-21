@@ -128,8 +128,13 @@ class VideoJobs(private val context: Context) {
     }
 
     /** The quiet progress notification that lets the foreground service hold the render. */
-    fun foregroundInfo(workId: UUID, messageId: Long, progress: VideoProgress): ForegroundInfo {
-        val notification = progressNotification(workId, messageId, progress)
+    fun foregroundInfo(
+        workId: UUID,
+        messageId: Long,
+        conversationId: Long,
+        progress: VideoProgress
+    ): ForegroundInfo {
+        val notification = progressNotification(workId, messageId, conversationId, progress)
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ForegroundInfo(
                 notificationId(messageId),
@@ -141,27 +146,69 @@ class VideoJobs(private val context: Context) {
         }
     }
 
-    fun updateProgress(workId: UUID, messageId: Long, progress: VideoProgress) {
-        notify(notificationId(messageId), progressNotification(workId, messageId, progress))
+    fun updateProgress(workId: UUID, messageId: Long, conversationId: Long, progress: VideoProgress) {
+        notify(notificationId(messageId), progressNotification(workId, messageId, conversationId, progress))
     }
 
-    fun showFinished(messageId: Long, success: Boolean, detail: String?) {
-        ensureChannel()
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+    /**
+     * The channel a FINISHED render announces itself on.
+     *
+     * Separate from the progress channel, and not for tidiness: the progress one is
+     * IMPORTANCE_LOW so the quiet foreground-service bar never buzzes, and a "ready" posted
+     * there is silent, invisible on a locked GrapheneOS phone, and - posted under the
+     * foreground notification's own id - torn down with it the moment the worker returns.
+     * Default importance, its own id, no setOnlyAlertOnce: it is allowed to light the screen
+     * once, which is the entire point of it.
+     */
+    fun ensureDoneChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (manager.getNotificationChannel(DONE_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            DONE_CHANNEL_ID,
+            context.getString(R.string.render_done_channel),
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+        manager.createNotificationChannel(channel)
+    }
+
+    fun showFinished(messageId: Long, conversationId: Long, success: Boolean, detail: String?) {
+        showDone(
+            messageId = messageId,
+            conversationId = conversationId,
+            title = context.getString(if (success) R.string.video_ready else R.string.video_failed),
+            detail = detail
+        )
+    }
+
+    /**
+     * "<something> ready", tappable straight into the conversation it belongs to. Used by the
+     * video worker and by the in-app image/edit paths, which have no worker at all.
+     */
+    fun showDone(messageId: Long, conversationId: Long, title: String, detail: String?) {
+        ensureDoneChannel()
+        val builder = NotificationCompat.Builder(context, DONE_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_video)
-            .setContentTitle(
-                context.getString(if (success) R.string.video_ready else R.string.video_failed)
-            )
-            .apply { if (!detail.isNullOrBlank()) setContentText(detail) }
-            .setContentIntent(openAppIntent())
+            .setContentTitle(title)
+            .setContentIntent(openConversationIntent(doneNotificationId(messageId), conversationId))
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-        notify(notificationId(messageId), notification)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        if (!detail.isNullOrBlank()) {
+            // A provider's refusal is a sentence, not a label; collapsed to one line it says
+            // nothing useful.
+            builder.setContentText(detail)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+        }
+        notify(doneNotificationId(messageId), builder.build())
     }
 
-    private fun progressNotification(workId: UUID, messageId: Long, progress: VideoProgress): android.app.Notification {
+    private fun progressNotification(
+        workId: UUID,
+        messageId: Long,
+        conversationId: Long,
+        progress: VideoProgress
+    ): android.app.Notification {
         ensureChannel()
         val cancelIntent = WorkManager.getInstance(context).createCancelPendingIntent(workId)
         val text = when (progress.phase) {
@@ -180,17 +227,25 @@ class VideoJobs(private val context: Context) {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setContentIntent(openAppIntent())
+            .setContentIntent(openConversationIntent(notificationId(messageId), conversationId))
             .addAction(0, context.getString(R.string.video_cancel), cancelIntent)
             .build()
     }
 
-    private fun openAppIntent(): PendingIntent {
+    /**
+     * Tap lands in THAT conversation, not on whatever the app happened to be showing.
+     *
+     * The request code must differ per notification. PendingIntent equality ignores extras, so
+     * with a shared request code FLAG_UPDATE_CURRENT rewrites the one live PendingIntent and
+     * every notification in the shade ends up opening the conversation of the last one posted.
+     */
+    private fun openConversationIntent(requestCode: Int, conversationId: Long): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra(MainActivity.EXTRA_CONVERSATION_ID, conversationId)
         }
         return PendingIntent.getActivity(
-            context, 0, intent,
+            context, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }
@@ -206,6 +261,7 @@ class VideoJobs(private val context: Context) {
 
     companion object {
         const val CHANNEL_ID = "video_renders"
+        const val DONE_CHANNEL_ID = "render_done"
         const val TAG_VIDEO = "video"
         private const val TAG_MESSAGE_PREFIX = "video-msg:"
         private const val TAG_CONVERSATION_PREFIX = "video-conv:"
@@ -219,5 +275,12 @@ class VideoJobs(private val context: Context) {
 
         /** Stable per message so a progress update replaces, never stacks. */
         fun notificationId(messageId: Long): Int = 41000 + (messageId % 100000).toInt()
+
+        /**
+         * The "ready" notification's id. A DISJOINT range, not notificationId + 1: progress ids
+         * run 41000..140999, so +1 would be the progress id of the next message row, and
+         * finishing one render would silently replace another render's progress bar.
+         */
+        fun doneNotificationId(messageId: Long): Int = 141000 + (messageId % 100000).toInt()
     }
 }

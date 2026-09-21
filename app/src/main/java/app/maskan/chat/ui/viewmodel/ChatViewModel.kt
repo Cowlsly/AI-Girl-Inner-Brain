@@ -12,8 +12,12 @@ import app.maskan.chat.data.local.Presets
 import app.maskan.chat.data.local.SystemPromptPreset
 import app.maskan.chat.data.model.Dialect
 import app.maskan.chat.data.remote.providers.ProviderRegistry
+import app.maskan.chat.BuildConfig
+import app.maskan.chat.MaskanApplication
 import app.maskan.chat.R
 import android.content.Intent
+import android.util.Log
+import app.maskan.chat.data.remote.ApiHttpException
 import app.maskan.chat.data.repository.ChatRepository
 import app.maskan.chat.data.repository.ExportFormat
 import app.maskan.chat.data.repository.KeyRepository
@@ -73,6 +77,16 @@ data class ChatUiState(
     val imageSize: String = VideoOptions.DEFAULT_IMAGE_SIZE,
     /** The server's own price for the armed video choice (Venice quotes; others do not). */
     val videoQuote: Double? = null,
+    /**
+     * The chosen image and video models, mirrored into state ON PURPOSE.
+     *
+     * They live in KeyRepository, and the composer used to read them through plain function
+     * calls. That works only while something else happens to recompose: changing the model from
+     * the + menu writes a preference, which is invisible to Compose, so the menu subtitle and the
+     * cost chips would go on showing the old model until the screen was left and re-entered.
+     */
+    val selectedImageModelName: String = "",
+    val selectedVideoModelName: String = "",
     /** True while the chat model is rewriting the user's description into an image prompt. */
     val improvingPrompt: Boolean = false,
     /**
@@ -118,6 +132,13 @@ class ChatViewModel(
      */
     private var pinnedModelIsDead = false
 
+    /**
+     * The assistant placeholder the running image/edit request is writing into. A failure
+     * carries no message id of its own, and the "could not be made" notification still needs a
+     * stable id so it replaces that request's entry instead of stacking a new one.
+     */
+    private var lastRenderMessageId: Long = 0L
+
     fun loadConversation(conversationId: Long) {
         messageCollectionJob?.cancel()
         currentConversationId = conversationId
@@ -150,6 +171,8 @@ class ChatViewModel(
                 selectedModel = model,
                 currentPreset = preset,
                 presetSelected = conversation?.systemPromptId != null,
+                selectedImageModelName = keyRepository.getSelectedImageModel(providerId).orEmpty(),
+                selectedVideoModelName = keyRepository.getSelectedVideoModel(providerId).orEmpty(),
                 // A remembered "576x1024" means nothing to Veo and "16:9" nothing to Wan.
                 videoSize = VideoOptions.validSize(providerId, preferenceRepository.getVideoSize()),
                 videoSeconds = VideoOptions.validSeconds(providerId, preferenceRepository.getVideoSeconds())
@@ -327,7 +350,7 @@ class ChatViewModel(
         if (!provider.supportsImageGeneration) return false
         // Require a CHOSEN model, not merely models that exist: the button is a one-tap arm, so
         // it must never lead to "pick an image model in Settings first".
-        return !keyRepository.getSelectedImageModel(providerId).isNullOrBlank()
+        return _uiState.value.selectedImageModelName.isNotBlank()
     }
 
     fun setImageMode(enabled: Boolean) {
@@ -395,7 +418,7 @@ class ChatViewModel(
         val providerId = _uiState.value.selectedProviderId
         val provider = ProviderRegistry.getProvider(providerId) ?: return false
         if (!provider.supportsVideoGeneration) return false
-        return !keyRepository.getSelectedVideoModel(providerId).isNullOrBlank()
+        return _uiState.value.selectedVideoModelName.isNotBlank()
     }
 
     fun setVideoSize(size: String) {
@@ -440,8 +463,37 @@ class ChatViewModel(
         refreshVideoQuote()
     }
 
-    fun selectedVideoModel(): String =
-        keyRepository.getSelectedVideoModel(_uiState.value.selectedProviderId).orEmpty()
+    fun selectedVideoModel(): String = _uiState.value.selectedVideoModelName
+
+    // -- The + menu's own pickers (plan 1.4) -----------------------------
+    //
+    // Settings owns the same two preferences, but ChatScreen is never handed a
+    // SettingsViewModel - that one is built in MainActivity for the Settings route alone. These
+    // read and write the very same KeyRepository / PreferenceRepository entries, so a model
+    // chosen here is the model Settings shows, and the other way round.
+
+    fun imageModelChoices(): List<String> =
+        preferenceRepository.getImageModels(_uiState.value.selectedProviderId)
+
+    fun videoModelChoices(): List<String> =
+        preferenceRepository.getVideoModels(_uiState.value.selectedProviderId)
+
+    fun freeModels(): Set<String> =
+        preferenceRepository.getFreeModels(_uiState.value.selectedProviderId)
+
+    fun selectImageModel(model: String) {
+        val clean = model.trim()
+        keyRepository.saveSelectedImageModel(_uiState.value.selectedProviderId, clean)
+        _uiState.value = _uiState.value.copy(selectedImageModelName = clean)
+    }
+
+    fun selectVideoModel(model: String) {
+        val clean = model.trim()
+        keyRepository.saveSelectedVideoModel(_uiState.value.selectedProviderId, clean)
+        _uiState.value = _uiState.value.copy(selectedVideoModelName = clean)
+        // The cost chips are priced per model, so a new model reprices them.
+        refreshVideoQuote()
+    }
 
     fun generateVideo(prompt: String) {
         if (prompt.isBlank()) return
@@ -583,6 +635,7 @@ class ChatViewModel(
                 upsertMessage(event.message)
             }
             is ChatRepository.StreamEvent.Started -> {
+                lastRenderMessageId = event.message.id
                 upsertMessage(event.message)
                 _uiState.value = _uiState.value.copy(isLoading = false, isStreaming = true)
             }
@@ -590,8 +643,10 @@ class ChatViewModel(
                 updateMessageContent(event.messageId, event.fullContent)
             }
             is ChatRepository.StreamEvent.ImageReady -> {
+                val kind = _uiState.value.pendingKind
                 upsertMessage(event.message)
                 _uiState.value = _uiState.value.copy(isLoading = false, isStreaming = false, pendingKind = null)
+                announceRender(event.message.id, kind, success = true, detail = null)
             }
             is ChatRepository.StreamEvent.VideoQueued -> {
                 // The composer is free again the moment the server has the job; the bubble
@@ -606,16 +661,52 @@ class ChatViewModel(
     }
 
     private suspend fun handleSendFailure(error: Throwable) {
+        val kind = _uiState.value.pendingKind
         // Classify BEFORE building the message: both read the error body, and the classification
         // is the one that must not come up empty.
         val recoverable = findRecoverableModel(error)
+        val shown = ErrorMapper.mapToUserMessage(getApplication(), error)
+        if (BuildConfig.DEBUG) {
+            // Plan 1.3: the only way to be sure no provider path still answers a 4xx with "No
+            // internet" is to read, for every failure, what was thrown and what the user was
+            // told. One line, debug builds only.
+            val code = when (error) {
+                is ApiHttpException -> error.code
+                is retrofit2.HttpException -> error.code()
+                else -> -1
+            }
+            Log.w("Maskan", "send failed: " + error.javaClass.simpleName + " http=" + code +
+                " shown=" + shown + " raw=" + error.message)
+        }
         _uiState.value = _uiState.value.copy(
             isLoading = false,
             isStreaming = false,
-            error = ErrorMapper.mapToUserMessage(getApplication(), error),
+            error = shown,
             recoverableModel = recoverable,
             pendingKind = null
         )
+        announceRender(lastRenderMessageId, kind, success = false, detail = shown)
+    }
+
+    /**
+     * A picture and an edit run IN the app, not in a worker, so nothing tells the user when one
+     * lands: the 300 s cloud edit and the 171 s local flux2-edit are long enough that people put
+     * the phone down. Post the same "ready" notification the video worker posts - but only when
+     * no screen of ours is showing, because on screen the bubble already said it.
+     */
+    private fun announceRender(messageId: Long, kind: String?, success: Boolean, detail: String?) {
+        if (kind != "image" && kind != "edit") return
+        val maskan = getApplication<Application>() as? MaskanApplication ?: return
+        if (maskan.isInForeground) return
+        val title = maskan.getString(
+            when {
+                kind == "edit" && success -> R.string.edit_ready
+                kind == "edit" -> R.string.edit_failed
+                success -> R.string.image_ready
+                else -> R.string.image_failed
+            }
+        )
+        maskan.videoJobs.showDone(messageId, currentConversationId, title, detail)
     }
 
     /**

@@ -54,6 +54,8 @@ class VideoRenderWorker(
         val row = dao.getMessageById(messageId) ?: return Result.success() // row deleted: nothing to do
         val jobId = row.videoJobId ?: return Result.success()
         if (row.imagePath != null) return Result.success()                  // already collected
+        // Where a tap on the finished notification must land.
+        val conversationId = row.conversationId
 
         val provider = ProviderRegistry.getProvider(providerId)
         val baseUrl = app.keyRepository.getBaseUrl(providerId)?.takeIf { it.isNotBlank() }
@@ -68,7 +70,7 @@ class VideoRenderWorker(
 
         var last = VideoProgress.WAITING
         val foreground = try {
-            setForeground(jobs.foregroundInfo(id, messageId, last))
+            setForeground(jobs.foregroundInfo(id, messageId, conversationId, last))
             true
         } catch (_: Exception) {
             false
@@ -86,7 +88,7 @@ class VideoRenderWorker(
                     client.status(baseUrl, apiKey, jobId)
                 } catch (e: VideoJobClient.JobGone) {
                     markFailed(dao, messageId, applicationContext.getString(R.string.video_job_lost))
-                    jobs.showFinished(messageId, success = false, detail = null)
+                    jobs.showFinished(messageId, conversationId, success = false, detail = null)
                     return Result.failure()
                 } catch (e: VideoJobClient.ServerError) {
                     if (e.isTransient) {
@@ -94,7 +96,7 @@ class VideoRenderWorker(
                         continue
                     }
                     markFailed(dao, messageId, e.providerMessage ?: e.message ?: "HTTP ${e.code}")
-                    jobs.showFinished(messageId, success = false, detail = e.providerMessage)
+                    jobs.showFinished(messageId, conversationId, success = false, detail = e.providerMessage)
                     return Result.failure()
                 } catch (e: IOException) {
                     // Wire trouble - a stalled link, a server mid-restart. Keep the last known
@@ -110,7 +112,7 @@ class VideoRenderWorker(
                     etaSeconds = status.etaSeconds?.toInt()
                 )
                 setProgress(last.toData())
-                if (foreground) jobs.updateProgress(id, messageId, last)
+                if (foreground) jobs.updateProgress(id, messageId, conversationId, last)
 
                 when (status.status) {
                     "completed" -> {
@@ -118,7 +120,7 @@ class VideoRenderWorker(
                             client.download(baseUrl, apiKey, jobId)
                         } catch (e: VideoJobClient.JobGone) {
                             markFailed(dao, messageId, applicationContext.getString(R.string.video_job_lost))
-                            jobs.showFinished(messageId, success = false, detail = null)
+                            jobs.showFinished(messageId, conversationId, success = false, detail = null)
                             return Result.failure()
                         } catch (e: VideoJobClient.ServerError) {
                             // 409 = not ready after all; anything transient = ask again.
@@ -130,14 +132,16 @@ class VideoRenderWorker(
                         }
                         val fileName = app.imageStore.save(bytes)
                         dao.updateVideoDone(messageId, fileName, VIDEO_MIME)
-                        jobs.showFinished(messageId, success = true, detail = null)
+                        // LAST thing before the worker returns: WorkManager tears the foreground
+                        // notification down on return, and this one must outlive that.
+                        jobs.showFinished(messageId, conversationId, success = true, detail = null)
                         return Result.success()
                     }
                     "failed" -> {
                         val reason = status.error
                             ?: applicationContext.getString(R.string.video_failed)
                         markFailed(dao, messageId, reason)
-                        jobs.showFinished(messageId, success = false, detail = status.error)
+                        jobs.showFinished(messageId, conversationId, success = false, detail = status.error)
                         return Result.failure()
                     }
                     "cancelled" -> {

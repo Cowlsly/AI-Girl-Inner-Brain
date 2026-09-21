@@ -349,4 +349,11 @@
     <string name="video_cost_usd_fmt">~%1$s $</string>
     <string name="video_quote_fmt">سعر المزوّد لهذا المقطع: %1$s $</string>
     <string name="model_cannot_see_images">نموذج المحادثة هذا لا يقبل الصور. اختر نموذجًا يحمل علامة 📷 من الإعدادات، أو مزوّدًا يعدّل الصور أو يحرّكها.</string>
+    <string name="render_done_channel">اكتملت الطلبات</string>
+    <string name="image_ready">الصورة جاهزة</string>
+    <string name="image_failed">تعذّر إنشاء الصورة</string>
+    <string name="edit_ready">التعديل جاهز</string>
+    <string name="edit_failed">تعذّر تنفيذ التعديل</string>
+    <string name="model_picker_none">لم يُختر أي نموذج</string>
+    <string name="change_model">تغيير النموذج</string>
 </resources>
