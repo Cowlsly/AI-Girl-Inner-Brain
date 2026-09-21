@@ -383,4 +383,12 @@
     <string name="global_memory_hint">One memory file for every chat, inside a folder or not. Off until you turn it on.</string>
     <string name="global_memory_edit">Edit shared memory</string>
     <string name="project_file_export_failed">This file could not be exported.</string>
+    <string name="attach_take_photo">Take a photo</string>
+    <string name="camera_not_available">No camera app on this phone</string>
+    <string name="photo_question_hint">What is this?</string>
+    <string name="camera_chip_translate">Translate this</string>
+    <string name="camera_chip_read_aloud">Read this to me</string>
+    <string name="camera_prompt_translate">Translate all the text in this photo into English. Keep the lines in the same order.</string>
+    <string name="camera_prompt_read_aloud">Read out the text in this photo, then say in one line what it is.</string>
+    <string name="camera_prompt_what_is_this">What is in this photo? Explain briefly in simple words.</string>
 </resources>

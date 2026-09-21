@@ -25,11 +25,14 @@ import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.util.ErrorMapper
 import app.maskan.chat.util.ImageStore
 import app.maskan.chat.util.ProjectMemory
+import app.maskan.chat.util.CameraCapture
 import app.maskan.chat.util.ImageUtils
 import app.maskan.chat.video.VideoJobs
 import app.maskan.chat.video.VideoOptions
 import app.maskan.chat.video.VideoProgress
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -243,7 +246,11 @@ class ChatViewModel(
     fun attachImage(uri: Uri) {
         viewModelScope.launch {
             try {
-                val (bytes, mimeType) = ImageUtils.compressImage(getApplication(), uri)
+                // Decoding a 12 MP JPEG is not main-thread work. viewModelScope is Main, so
+                // without this the picker returned and the UI froze for as long as the decode.
+                val (bytes, mimeType) = withContext(Dispatchers.IO) {
+                    ImageUtils.compressImage(getApplication(), uri)
+                }
                 _uiState.value = _uiState.value.copy(
                     pendingImageBytes = bytes,
                     pendingImageMimeType = mimeType
@@ -253,6 +260,56 @@ class ChatViewModel(
                     error = ErrorMapper.mapToUserMessage(getApplication(), e)
                 )
             }
+        }
+    }
+
+    /**
+     * A photo just taken with the system camera. Same composer state as a gallery photo from
+     * here on - but read at the camera size, off the main thread, and the cache file is gone
+     * before this returns.
+     *
+     * Deleted through the resolver rather than as a File: the Uri is the only thing that crossed
+     * to the camera app and back, and FileProvider.delete() removes the file behind it. Nothing
+     * readable is left in the cache whether the photo is sent, replaced or dropped.
+     */
+    fun attachCameraPhoto(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val (bytes, mimeType) = withContext(Dispatchers.IO) {
+                    val decoded = ImageUtils.compressImage(
+                        getApplication(),
+                        uri,
+                        maxSizeKb = ImageUtils.CAMERA_MAX_KB,
+                        maxDimension = ImageUtils.CAMERA_MAX_DIMENSION
+                    )
+                    deletePhoto(uri)
+                    decoded
+                }
+                if (BuildConfig.DEBUG) {
+                    Log.d("MaskanCam", "attached " + bytes.size + " bytes, " + mimeType)
+                }
+                _uiState.value = _uiState.value.copy(
+                    pendingImageBytes = bytes,
+                    pendingImageMimeType = mimeType
+                )
+            } catch (e: Exception) {
+                withContext(Dispatchers.IO) { deletePhoto(uri) }
+                if (BuildConfig.DEBUG) Log.w("MaskanCam", "capture failed: " + e)
+                _uiState.value = _uiState.value.copy(
+                    error = ErrorMapper.mapToUserMessage(getApplication(), e)
+                )
+            }
+        }
+    }
+
+    private fun deletePhoto(uri: Uri) {
+        runCatching { getApplication<Application>().contentResolver.delete(uri, null, null) }
+    }
+
+    /** Drop camera captures the process did not live to collect. Called on entering a chat. */
+    fun sweepCameraCache() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { CameraCapture.sweep(getApplication()) }
         }
     }
 
@@ -338,6 +395,21 @@ class ChatViewModel(
         val provider = ProviderRegistry.getProvider(providerId)
         val visionModels = preferenceRepository.getVisionModels(providerId)
         if (visionModels.isEmpty()) return provider?.supportsVision == true
+        return _uiState.value.selectedModel.trim() in visionModels
+    }
+
+    /**
+     * Whether to offer the three photo questions under a waiting photo.
+     *
+     * NOT currentProviderSupportsVision(): that answers "do we know it can see", and on a
+     * provider that publishes no capability data - Together, most of the list - the answer is no
+     * even for models that plainly can. The chips would then be missing exactly where the camera
+     * is offered. The rule here is the one ChatRepository.modelKnownBlind uses for carrying a
+     * photo forward: offer them unless the app has data saying this model takes text only.
+     */
+    fun photoQuestionsAvailable(): Boolean {
+        val visionModels = preferenceRepository.getVisionModels(_uiState.value.selectedProviderId)
+        if (visionModels.isEmpty()) return true
         return _uiState.value.selectedModel.trim() in visionModels
     }
 

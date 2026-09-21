@@ -383,4 +383,12 @@
     <string name="global_memory_hint">ไฟล์ความจำเดียวสำหรับทุกแชท ทั้งในโฟลเดอร์และนอกโฟลเดอร์ ปิดอยู่จนกว่าคุณจะเปิด</string>
     <string name="global_memory_edit">แก้ไขความจำที่ใช้ร่วมกัน</string>
     <string name="project_file_export_failed">ส่งออกไฟล์นี้ไม่ได้</string>
+    <string name="attach_take_photo">ถ่ายรูป</string>
+    <string name="camera_not_available">ไม่มีแอปกล้องในเครื่องนี้</string>
+    <string name="photo_question_hint">นี่คืออะไร</string>
+    <string name="camera_chip_translate">แปลข้อความนี้</string>
+    <string name="camera_chip_read_aloud">อ่านให้ฟัง</string>
+    <string name="camera_prompt_translate">แปลข้อความทั้งหมดในรูปนี้เป็นภาษาไทย โดยเรียงบรรทัดตามลำดับเดิม</string>
+    <string name="camera_prompt_read_aloud">อ่านข้อความในรูปนี้ แล้วบอกสั้นๆ หนึ่งบรรทัดว่านี่คืออะไร</string>
+    <string name="camera_prompt_what_is_this">ในรูปนี้มีอะไร อธิบายสั้นๆ ด้วยคำง่ายๆ</string>
 </resources>

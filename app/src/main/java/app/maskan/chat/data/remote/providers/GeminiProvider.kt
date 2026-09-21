@@ -10,6 +10,7 @@ import app.maskan.chat.data.remote.GeminiService
 import app.maskan.chat.data.remote.GeminiStreamChunk
 import app.maskan.chat.data.remote.GeminiSystemInstruction
 import app.maskan.chat.data.remote.Message
+import app.maskan.chat.data.remote.MessageContent
 import app.maskan.chat.data.remote.parseSSEStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.Json
@@ -72,9 +73,26 @@ class GeminiProvider(
                     }
                 )
             } else {
+                // An EARLIER turn that carried a photo (ChatRepository.photosToCarry). Same part
+                // order and the same empty-text rule as the current turn above.
+                val carried = msg.content as? MessageContent.WithImage
                 GeminiContent(
                     role = role,
-                    parts = listOf(GeminiPart(text = msg.content.textContent()))
+                    parts = if (carried != null) {
+                        buildList {
+                            add(
+                                GeminiPart(
+                                    inlineData = GeminiInlineData(
+                                        mimeType = carried.mimeType,
+                                        data = carried.imageBase64
+                                    )
+                                )
+                            )
+                            if (carried.text.isNotBlank()) add(GeminiPart(text = carried.text))
+                        }
+                    } else {
+                        listOf(GeminiPart(text = msg.content.textContent()))
+                    }
                 )
             }
         }

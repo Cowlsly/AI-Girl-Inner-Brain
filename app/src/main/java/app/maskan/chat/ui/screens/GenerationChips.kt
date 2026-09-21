@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -81,6 +82,57 @@ internal fun VideoOptionChips(
                 )
             }
         }
+    }
+}
+
+/**
+ * The three questions a photo is almost always about, under a photo waiting in the composer.
+ *
+ * Every chip sends immediately - there is nothing to confirm, and a person holding a phone over
+ * a menu is not going to compose a sentence first. "Read this to me" differs only in what
+ * happens to the ANSWER: it is spoken when it arrives.
+ */
+@Composable
+internal fun PhotoQuestionChips(
+    onAsk: (String) -> Unit,
+    onReadAloud: (String) -> Unit
+) {
+    val translatePrompt = stringResource(R.string.camera_prompt_translate)
+    val readPrompt = stringResource(R.string.camera_prompt_read_aloud)
+    val whatPrompt = stringResource(R.string.camera_prompt_what_is_this)
+    Row(
+        modifier = Modifier
+            .padding(horizontal = 12.dp, vertical = 2.dp)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        AssistChip(
+            onClick = { onAsk(translatePrompt) },
+            label = {
+                Text(
+                    text = stringResource(R.string.camera_chip_translate),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        )
+        AssistChip(
+            onClick = { onReadAloud(readPrompt) },
+            label = {
+                Text(
+                    text = stringResource(R.string.camera_chip_read_aloud),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        )
+        AssistChip(
+            onClick = { onAsk(whatPrompt) },
+            label = {
+                Text(
+                    text = stringResource(R.string.photo_question_hint),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        )
     }
 }
 

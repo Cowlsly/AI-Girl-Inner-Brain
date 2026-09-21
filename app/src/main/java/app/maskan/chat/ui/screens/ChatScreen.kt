@@ -47,6 +47,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -81,6 +82,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -116,8 +119,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import app.maskan.chat.BuildConfig
 import app.maskan.chat.MaskanApplication
 import app.maskan.chat.R
+import app.maskan.chat.util.CameraCapture
 import app.maskan.chat.data.local.MessageEntity
 import app.maskan.chat.data.local.localizedName
 import app.maskan.chat.data.remote.providers.ProviderRegistry
@@ -195,6 +200,44 @@ fun ChatScreen(
         }
     }
 
+    // Two things start narration now - the speak button on a bubble and the "Read this to me"
+    // chip - so the engine handling lives here instead of inside the button.
+    val speakText: (Long, String) -> Unit = speak@{ messageId, content ->
+        val engine = tts.value
+        if (!ttsReady || engine == null) {
+            Toast.makeText(context, context.getString(R.string.voice_narration_unavailable), Toast.LENGTH_SHORT).show()
+            return@speak
+        }
+        val appLocale = app.localeRepository.getLocale()
+        val locale = when (appLocale) {
+            "ar" -> Locale("ar", "SA")
+            "th" -> Locale("th", "TH")
+            "en" -> Locale("en", "US")
+            else -> Locale.getDefault()
+        }
+        var langResult = engine.setLanguage(locale)
+        if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            // Fall back to en-US only for English/system content - reading Arabic with an
+            // English voice is gibberish.
+            if (appLocale == "en" || appLocale.isEmpty()) {
+                langResult = engine.setLanguage(Locale.US)
+            }
+        }
+        if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            Toast.makeText(context, context.getString(R.string.tts_language_unavailable), Toast.LENGTH_SHORT).show()
+            return@speak
+        }
+        engine.stop()
+        speakingMessageId = messageId
+        engine.speak(content, TextToSpeech.QUEUE_FLUSH, null, messageId.toString())
+    }
+
+    // "Read this to me" is armed, not queued: it holds the id of the last reply that existed
+    // when the chip was tapped, and speaks the first one AFTER it. A failed request leaves no
+    // new reply, so nothing is spoken and the arming is dropped - never the previous answer
+    // read out for no reason.
+    var speakAfterMessageId by remember { mutableStateOf<Long?>(null) }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -208,6 +251,56 @@ fun ChatScreen(
     ) { uri ->
         if (uri != null) {
             viewModel.attachFile(uri)
+        }
+    }
+
+    // The photo being taken right now. rememberSaveable, not remember: the camera app is a
+    // different process, ours can be killed behind it, and on the way back this is the only
+    // thing that says which file the photo went into.
+    var pendingCameraPath by rememberSaveable { mutableStateOf<String?>(null) }
+    // Bumped on a successful capture; the effect below puts the cursor in the field so the
+    // question can be typed without a second tap.
+    var focusAfterCapture by remember { mutableStateOf(0) }
+    val inputFocusRequester = remember { FocusRequester() }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { taken ->
+        val file = pendingCameraPath?.let { java.io.File(it) }
+        pendingCameraPath = null
+        // A camera app that reports success and writes nothing is the same case as a cancel -
+        // GrapheneOS's camera, a scoped return, a user backing out: nothing is attached, the
+        // composer is untouched, and the empty file goes away.
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "MaskanCam",
+                "result taken=" + taken + " file=" + (file?.name ?: "none") +
+                    " exists=" + (file?.exists() ?: false) + " bytes=" + (file?.length() ?: -1L)
+            )
+        }
+        if (taken && file != null && file.length() > 0L) {
+            viewModel.attachCameraPhoto(CameraCapture.uriFor(context, file))
+            focusAfterCapture++
+        } else {
+            file?.delete()
+        }
+    }
+    val cameraUnavailable = stringResource(R.string.camera_not_available)
+    val takePhoto: () -> Unit = {
+        try {
+            val file = CameraCapture.newPhotoFile(context)
+            pendingCameraPath = file.absolutePath
+            cameraLauncher.launch(CameraCapture.uriFor(context, file))
+        } catch (_: Exception) {
+            // No camera app at all, or the file could not be made. Either way there is nothing
+            // to wait for.
+            pendingCameraPath = null
+            Toast.makeText(context, cameraUnavailable, Toast.LENGTH_LONG).show()
+        }
+    }
+    LaunchedEffect(focusAfterCapture) {
+        if (focusAfterCapture > 0) {
+            // The field may not be composed if the chat is still choosing a preset.
+            runCatching { inputFocusRequester.requestFocus() }
         }
     }
 
@@ -251,6 +344,24 @@ fun ChatScreen(
 
     LaunchedEffect(conversationId) {
         viewModel.loadConversation(conversationId)
+        // A capture the process did not live to collect. By age, so a photo being taken right
+        // now is never pulled out from under the camera app.
+        viewModel.sweepCameraCache()
+    }
+
+    val lastReply = uiState.messages.lastOrNull { it.role == "assistant" }
+    LaunchedEffect(speakAfterMessageId, uiState.isLoading, uiState.isStreaming, lastReply?.id, lastReply?.content, uiState.error) {
+        val armed = speakAfterMessageId ?: return@LaunchedEffect
+        if (uiState.error != null) {
+            speakAfterMessageId = null
+            return@LaunchedEffect
+        }
+        if (uiState.isLoading || uiState.isStreaming) return@LaunchedEffect
+        val reply = lastReply ?: return@LaunchedEffect
+        if (reply.id > armed && reply.content.isNotBlank()) {
+            speakAfterMessageId = null
+            speakText(reply.id, reply.content)
+        }
     }
 
     val visibleMessages = uiState.messages.filter { it.role != "system" }
@@ -450,6 +561,26 @@ fun ChatScreen(
                             imageBytes = bytes,
                             onRemove = { viewModel.clearPendingImage() }
                         )
+                        // The whole point of pointing a phone at a menu is that the question does
+                        // not have to be composed. Not shown while the photo is the raw material
+                        // for something else (an edit, a video), where these would send it to the
+                        // wrong place.
+                        if (viewModel.photoQuestionsAvailable() &&
+                            !uiState.imageMode && !uiState.videoMode && !uiState.editMode
+                        ) {
+                            PhotoQuestionChips(
+                                onAsk = { prompt ->
+                                    inputText = ""
+                                    viewModel.sendMessage(prompt)
+                                },
+                                onReadAloud = { prompt ->
+                                    speakAfterMessageId =
+                                        uiState.messages.lastOrNull { it.role == "assistant" }?.id ?: 0L
+                                    inputText = ""
+                                    viewModel.sendMessage(prompt)
+                                }
+                            )
+                        }
                         if (!preferenceRepository.hasSeenImagePrivacyNote()) {
                             val providerName = ProviderRegistry.getProvider(uiState.selectedProviderId)?.let { provider ->
                                 if (app.localeRepository.getLocale() == "ar") provider.nameAr else provider.displayName
@@ -558,6 +689,10 @@ fun ChatScreen(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             )
                         },
+                        onTakePhoto = takePhoto,
+                        photoAttached = uiState.pendingImageBytes != null &&
+                            !uiState.imageMode && !uiState.videoMode && !uiState.editMode,
+                        focusRequester = inputFocusRequester,
                         // A photo can be attached for chat (vision), for editing, or as the first
                         // frame of a video - any one of those earns the entry.
                         supportsVision = viewModel.currentProviderSupportsVision() ||
@@ -692,34 +827,11 @@ fun ChatScreen(
                         },
                         onSpeakToggle = {
                             val engine = tts.value
-                            if (!ttsReady || engine == null) {
-                                Toast.makeText(context, context.getString(R.string.voice_narration_unavailable), Toast.LENGTH_SHORT).show()
-                            } else if (speakingMessageId == message.id) {
+                            if (engine != null && speakingMessageId == message.id) {
                                 engine.stop()
                                 speakingMessageId = null
                             } else {
-                                val appLocale = app.localeRepository.getLocale()
-                                val locale = when (appLocale) {
-                                    "ar" -> Locale("ar", "SA")
-                                    "th" -> Locale("th", "TH")
-                                    "en" -> Locale("en", "US")
-                                    else -> Locale.getDefault()
-                                }
-                                var langResult = engine.setLanguage(locale)
-                                if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                                    // Fall back to en-US only for English/system content — reading
-                                    // Arabic with an English voice is gibberish.
-                                    if (appLocale == "en" || appLocale.isEmpty()) {
-                                        langResult = engine.setLanguage(Locale.US)
-                                    }
-                                }
-                                if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                                    Toast.makeText(context, context.getString(R.string.tts_language_unavailable), Toast.LENGTH_SHORT).show()
-                                } else {
-                                    engine.stop()
-                                    speakingMessageId = message.id
-                                    engine.speak(message.content, TextToSpeech.QUEUE_FLUSH, null, message.id.toString())
-                                }
+                                speakText(message.id, message.content)
                             }
                         }
                     )
@@ -1164,7 +1276,11 @@ private fun MessageInputBar(
     imageModelName: String = "",
     videoModelName: String = "",
     onPickImageModel: () -> Unit = {},
-    onPickVideoModel: () -> Unit = {}
+    onPickVideoModel: () -> Unit = {},
+    onTakePhoto: () -> Unit = {},
+    /** A photo is waiting to be asked about: the hint becomes the question it invites. */
+    photoAttached: Boolean = false,
+    focusRequester: FocusRequester? = null
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as MaskanApplication
@@ -1232,6 +1348,19 @@ private fun MessageInputBar(
                             )
                         },
                         onClick = { menuOpen = false; onAttachFile() }
+                    )
+                    // First, above the gallery: the common case is the thing in front of you,
+                    // not the thing you photographed yesterday. Dimmed with the same toast when
+                    // the model cannot see.
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.attach_take_photo)) },
+                        leadingIcon = { Text("\uD83D\uDCF7", fontSize = 18.sp) },
+                        modifier = Modifier.alpha(if (supportsVision) 1f else 0.4f),
+                        onClick = {
+                            menuOpen = false
+                            if (supportsVision) onTakePhoto()
+                            else Toast.makeText(context, modelCannotSee, Toast.LENGTH_LONG).show()
+                        }
                     )
                     // Always listed: a hidden entry reads as a broken app. Dimmed, and it says
                     // why, when the current model cannot take a photo and nothing else here
@@ -1329,11 +1458,32 @@ private fun MessageInputBar(
                 }
             }
         }
+        if (!isLoading && supportsVision) {
+            // One tap to the camera, beside the + it would otherwise be buried in. Only where the
+            // model can see: a permanently dimmed camera would cost the text field width on every
+            // text-only model, and the + menu still lists it (dimmed, with the toast) so the
+            // feature is never invisible.
+            val takePhotoLabel = stringResource(R.string.attach_take_photo)
+            IconButton(
+                onClick = onTakePhoto,
+                modifier = Modifier.size(44.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PhotoCamera,
+                    contentDescription = takePhotoLabel,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
         OutlinedTextField(
             value = text,
             onValueChange = onTextChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text(stringResource(R.string.message_placeholder)) },
+            modifier = Modifier
+                .weight(1f)
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
+            placeholder = {
+                Text(stringResource(if (photoAttached) R.string.photo_question_hint else R.string.message_placeholder))
+            },
             shape = RoundedCornerShape(24.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = MaterialTheme.colorScheme.primary,

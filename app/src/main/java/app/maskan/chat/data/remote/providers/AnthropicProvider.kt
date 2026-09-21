@@ -8,6 +8,7 @@ import app.maskan.chat.data.remote.AnthropicService
 import app.maskan.chat.data.remote.AnthropicStreamEvent
 import app.maskan.chat.data.remote.AnthropicSystemBlock
 import app.maskan.chat.data.remote.Message
+import app.maskan.chat.data.remote.MessageContent
 import app.maskan.chat.data.remote.parseSSEStream
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.Json
@@ -58,9 +59,20 @@ class AnthropicProvider(
                         )
                     )
                 } else {
+                    // An EARLIER turn that carried a photo (ChatRepository.photosToCarry): the
+                    // bytes are already base64 in the message row, so they go straight across.
+                    val carried = msg.content as? MessageContent.WithImage
                     AnthropicMessage(
                         role = msg.role,
-                        content = AnthropicMessageContent.Text(msg.content.textContent())
+                        content = if (carried != null) {
+                            AnthropicMessageContent.WithImage(
+                                text = carried.text,
+                                imageBase64 = carried.imageBase64,
+                                mimeType = carried.mimeType
+                            )
+                        } else {
+                            AnthropicMessageContent.Text(msg.content.textContent())
+                        }
                     )
                 }
             }

@@ -12,6 +12,7 @@ import app.maskan.chat.data.local.Presets
 import app.maskan.chat.data.model.Dialect
 import app.maskan.chat.data.remote.ChatCompletionResponse
 import app.maskan.chat.data.remote.Message
+import app.maskan.chat.data.remote.MessageContent
 import app.maskan.chat.data.remote.VideoBackend
 import app.maskan.chat.data.remote.VideoJobClient
 import app.maskan.chat.data.remote.providers.ProviderRegistry
@@ -216,7 +217,7 @@ class ChatRepository(
 
             userMessageId = saveMessage(conversationId, "user", userContent)
 
-            val messages = buildMessageList(conversation)
+            val messages = buildMessageList(conversation, conversation.modelId ?: model)
 
             val providerId = conversation.providerId
             val provider = ProviderRegistry.getProvider(providerId)
@@ -737,7 +738,7 @@ class ChatRepository(
         imageMimeType: String?
     ) {
         val conversationId = conversation.id
-        val messages = buildMessageList(conversation)
+        val messages = buildMessageList(conversation, conversation.modelId ?: model)
 
         val providerId = conversation.providerId
         val provider = ProviderRegistry.getProvider(providerId)
@@ -977,9 +978,28 @@ class ChatRepository(
         return TokenEstimate.clamp(assembled, MAX_SYSTEM_TOKENS)
     }
 
-    private suspend fun buildMessageList(conversation: ConversationEntity): List<Message> {
+    private suspend fun buildMessageList(
+        conversation: ConversationEntity,
+        /** The model about to answer - it decides whether photos can go back out at all. */
+        model: String
+    ): List<Message> {
         val entities = messageDao.getMessagesForConversationOnce(conversation.id)
-        val messages = entities.map { Message(role = it.role, text = it.content) }
+        val carried = photosToCarry(conversation, model, entities)
+        val messages = entities.map { entity ->
+            val base64 = entity.imageBase64
+            if (entity.id in carried && base64 != null) {
+                Message(
+                    role = entity.role,
+                    content = MessageContent.WithImage(
+                        text = entity.content,
+                        imageBase64 = base64,
+                        mimeType = entity.imageMimeType ?: "image/jpeg"
+                    )
+                )
+            } else {
+                Message(role = entity.role, text = entity.content)
+            }
+        }
 
         val systemMessages = messages.filter { it.role == "system" }
         val nonSystemMessages = messages.filter { it.role != "system" }
@@ -1009,6 +1029,64 @@ class ChatRepository(
     }
 
     /**
+     * Which stored photos go back out with this request.
+     *
+     * The last user photo is what a follow-up is almost always about ("which ones are
+     * vegetarian?"), and the one before it is what a comparison needs. Older ones are the
+     * conversation's history, not its subject, and re-uploading them every turn costs the user
+     * real money on a metered key.
+     */
+    private fun photosToCarry(
+        conversation: ConversationEntity,
+        model: String,
+        entities: List<MessageEntity>
+    ): Set<Long> {
+        val blind = modelKnownBlind(conversation, model)
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "MaskanCtx",
+                "carry? model=" + model + " knownBlind=" + blind +
+                    " visionModels=" + preferenceRepository.getVisionModels(conversation.providerId).size +
+                    " rowsWithImage=" + entities.count { it.role == "user" && it.imageBase64 != null }
+            )
+        }
+        if (blind) return emptySet()
+        return entities
+            .filter { it.role != "system" }
+            .takeLast(MAX_CONTEXT_MESSAGES)
+            .filter {
+                it.role == "user" &&
+                    it.imageBase64 != null &&
+                    // A photo-to-video row keeps its source photo here too; a rendered clip is
+                    // an assistant row and never reaches this filter.
+                    it.imageMimeType?.startsWith("image/") != false
+            }
+            .takeLast(MAX_CARRIED_PHOTOS)
+            .map { it.id }
+            .toSet()
+    }
+
+    /**
+     * Whether this app KNOWS the model about to answer cannot see - which is not the same as
+     * not knowing it can.
+     *
+     * Only OpenRouter, Venice and a local server publish per-model modalities; Together and most
+     * others publish nothing, and their provider-level flag is a guess about a catalogue of
+     * hundreds of models. Treating "no data" as "blind" is what silently dropped the photo from
+     * every follow-up on Together while the same model was answering about it (device, session
+     * 3). The picture was sent once already; withholding it now cannot protect anyone.
+     *
+     * Where there IS data and it says this model takes text only, the photo stays behind: that
+     * is a chat switched to a text model, and re-sending an image every turn would turn one
+     * failed message into a chat that can no longer be used at all.
+     */
+    private fun modelKnownBlind(conversation: ConversationEntity, model: String): Boolean {
+        val visionModels = preferenceRepository.getVisionModels(conversation.providerId)
+        if (visionModels.isEmpty()) return false
+        return model.trim() !in visionModels
+    }
+
+    /**
      * What is actually about to go on the wire, in the debug log: how many messages, in what
      * roles, and the whole system text.
      *
@@ -1026,6 +1104,7 @@ class ChatRepository(
             "conv=" + conversation.id + " folder=" + conversation.folderId +
                 " provider=" + conversation.providerId + " shape=" + shape +
                 " msgs=" + messages.size + " systems=" + system.size +
+                " imgs=" + messages.count { it.content is MessageContent.WithImage } +
                 " sysTokens=" + TokenEstimate.of(systemText) +
                 " roles=" + messages.joinToString(",") { it.role }
         )
@@ -1044,5 +1123,11 @@ class ChatRepository(
          * much. The editor's red meter warns long before this; this is the backstop.
          */
         const val MAX_SYSTEM_TOKENS = 6000
+
+        /**
+         * How many stored photos travel with a request. Every one of them is re-uploaded on
+         * every following turn, so this is a cost ceiling as much as a context choice.
+         */
+        const val MAX_CARRIED_PHOTOS = 2
     }
 }

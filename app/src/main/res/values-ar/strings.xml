@@ -383,4 +383,12 @@
     <string name="global_memory_hint">ملف ذاكرة واحد لكل محادثة، داخل مجلد أو خارجه. لا يعمل حتى تشغّله.</string>
     <string name="global_memory_edit">تحرير الذاكرة المشتركة</string>
     <string name="project_file_export_failed">تعذّر تصدير هذا الملف.</string>
+    <string name="attach_take_photo">التقط صورة</string>
+    <string name="camera_not_available">لا يوجد تطبيق كاميرا على هذا الهاتف</string>
+    <string name="photo_question_hint">ما هذا؟</string>
+    <string name="camera_chip_translate">ترجم هذا</string>
+    <string name="camera_chip_read_aloud">اقرأ لي هذا</string>
+    <string name="camera_prompt_translate">ترجم كل النص في هذه الصورة إلى العربية، مع إبقاء السطور بالترتيب نفسه.</string>
+    <string name="camera_prompt_read_aloud">اقرأ النص الذي في هذه الصورة، ثم اشرح في سطر واحد ما هذا.</string>
+    <string name="camera_prompt_what_is_this">ما الذي في هذه الصورة؟ اشرح باختصار وبكلمات بسيطة.</string>
 </resources>

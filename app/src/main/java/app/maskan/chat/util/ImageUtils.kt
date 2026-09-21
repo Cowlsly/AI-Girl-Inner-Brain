@@ -8,7 +8,23 @@ import java.io.ByteArrayOutputStream
 
 object ImageUtils {
 
-    fun compressImage(context: Context, uri: Uri, maxSizeKb: Int = 500): Pair<ByteArray, String> {
+    /**
+     * Longest side for a photo taken with the camera. Higher than the gallery default because
+     * this photo is going to be READ - a menu, a label, a form - and text is the first thing a
+     * downscale destroys. 1,536 px at quality 85 stays well under the 4-5 MB inline limit that
+     * cloud providers enforce.
+     */
+    const val CAMERA_MAX_DIMENSION = 1536
+
+    /** Backstop, not a target: at 1,536 px quality 85 lands far below this for ordinary scenes. */
+    const val CAMERA_MAX_KB = 900
+
+    fun compressImage(
+        context: Context,
+        uri: Uri,
+        maxSizeKb: Int = 500,
+        maxDimension: Int = 1024
+    ): Pair<ByteArray, String> {
         val inputStream = context.contentResolver.openInputStream(uri)
             ?: throw Exception("Cannot read image")
         val originalBytes = inputStream.use { it.readBytes() }
@@ -19,7 +35,6 @@ object ImageUtils {
         val height = options.outHeight
 
         var sampleSize = 1
-        val maxDimension = 1024
         while (width / sampleSize > maxDimension || height / sampleSize > maxDimension) {
             sampleSize *= 2
         }
