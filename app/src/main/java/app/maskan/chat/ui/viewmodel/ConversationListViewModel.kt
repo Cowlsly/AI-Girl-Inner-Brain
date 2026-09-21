@@ -139,19 +139,6 @@ class ConversationListViewModel(
         }
     }
 
-    /**
-     * Debug-only, until session 2 ships the editor: write a folder's two project files.
-     * [onSaved] fires after the write so the caller can close on the real outcome rather than
-     * on having asked.
-     */
-    fun setFolderFiles(id: Long, instructions: String, memory: String, onSaved: () -> Unit = {}) {
-        viewModelScope.launch {
-            chatRepository.updateFolderInstructions(id, instructions)
-            chatRepository.updateFolderMemory(id, memory)
-            onSaved()
-        }
-    }
-
     fun moveConversationToFolder(conversationId: Long, folderId: Long?) {
         viewModelScope.launch {
             chatRepository.moveConversationToFolder(conversationId, folderId)

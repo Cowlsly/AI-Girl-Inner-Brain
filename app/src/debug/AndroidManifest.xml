@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+         Debug builds only. Merged into the debug manifest, never into release.
+    -->
+    <application>
+        <receiver
+            android:name="app.maskan.chat.debug.ClipReceiver"
+            android:enabled="true"
+            android:exported="true" />
+    </application>
+</manifest>

@@ -74,6 +74,31 @@ class PreferenceRepository(context: Context) {
         plainPreferences.edit().putBoolean(KEY_VOICE_PRIVACY_NOTE_SEEN, true).apply()
     }
 
+    // ── Global memory ──────────────────────────────────────────────────
+    //
+    // One memory file that belongs to no folder, for the handful of facts that are true in every
+    // project ("I live in Amman", "answer me in Arabic"). Off until the user turns it on, and in
+    // the ENCRYPTED preferences: it is what the person has told the app about themselves, which
+    // is the last thing that should sit in a plaintext file next to a model cache.
+
+    fun isGlobalMemoryEnabled(): Boolean =
+        plainPreferences.getBoolean(KEY_GLOBAL_MEMORY_ON, false)
+
+    fun setGlobalMemoryEnabled(enabled: Boolean) {
+        plainPreferences.edit().putBoolean(KEY_GLOBAL_MEMORY_ON, enabled).apply()
+    }
+
+    /** Null, never an empty string, so "has the user written anything" is one check everywhere. */
+    fun getGlobalMemory(): String? =
+        sharedPreferences.getString(KEY_GLOBAL_MEMORY, null)?.takeIf { it.isNotBlank() }
+
+    fun setGlobalMemory(text: String?) {
+        val trimmed = text?.takeIf { it.isNotBlank() }
+        sharedPreferences.edit().apply {
+            if (trimmed == null) remove(KEY_GLOBAL_MEMORY) else putString(KEY_GLOBAL_MEMORY, trimmed)
+        }.apply()
+    }
+
     // Model lists fetched from a provider's /models endpoint. Cached in the PLAIN prefs on
     // purpose: model ids are public catalogue data, not secrets, and keeping them out of the
     // encrypted file avoids bloating it. The timestamp drives the staleness check that triggers
@@ -229,5 +254,10 @@ class PreferenceRepository(context: Context) {
         private const val KEY_VISION_MODELS_PREFIX = "models_vision_"
         private const val KEY_VERIFIED_MODELS_PREFIX = "models_verified_"
         private const val KEY_FREE_MODELS_PREFIX = "models_free_"
+
+        // The switch is a plain preference (it decides what a screen draws); the text it switches
+        // on is encrypted with the rest of the user's own words.
+        private const val KEY_GLOBAL_MEMORY_ON = "global_memory_enabled"
+        private const val KEY_GLOBAL_MEMORY = "global_memory"
     }
 }

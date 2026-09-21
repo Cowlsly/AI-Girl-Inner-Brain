@@ -34,7 +34,15 @@ internal fun FolderHeader(
     color: Color?,
     expanded: Boolean,
     onToggle: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    /**
+     * What this folder's instructions and memory cost on every message sent from inside it, or 0
+     * for a folder with no project files (and for the unfiled group, which has none to have).
+     *
+     * On the row rather than only in the editor because this is the number that explains why the
+     * chats in one folder feel slower and cost more than the chats in another.
+     */
+    projectTokens: Int = 0
 ) {
     Row(
         modifier = Modifier
@@ -64,5 +72,9 @@ internal fun FolderHeader(
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold
         )
+        if (projectTokens > 0) {
+            Spacer(modifier = Modifier.width(8.dp))
+            TokenCount(tokens = projectTokens)
+        }
     }
 }

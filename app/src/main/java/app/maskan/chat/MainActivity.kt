@@ -28,12 +28,16 @@ import app.maskan.chat.navigation.Routes
 import app.maskan.chat.ui.screens.AboutScreen
 import app.maskan.chat.ui.screens.ChatScreen
 import app.maskan.chat.ui.screens.ConversationListScreen
+import app.maskan.chat.ui.screens.FolderScreen
+import app.maskan.chat.ui.screens.ProjectFileEditorScreen
 import app.maskan.chat.ui.screens.SettingsScreen
 import app.maskan.chat.ui.screens.PrivacyIntroScreen
 import app.maskan.chat.ui.screens.PrivacyScreen
 import app.maskan.chat.ui.screens.WelcomeScreen
 import app.maskan.chat.ui.theme.MaskanTheme
 import app.maskan.chat.ui.viewmodel.ConversationListViewModel
+import app.maskan.chat.ui.viewmodel.ProjectFile
+import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
 import app.maskan.chat.ui.viewmodel.SettingsViewModel
 
 class MainActivity : ComponentActivity() {
@@ -192,6 +196,9 @@ private fun AppNavigation(
                 },
                 onNavigateToSettings = {
                     navController.navigate(Routes.SETTINGS)
+                },
+                onOpenProjectFiles = { folderId ->
+                    navController.navigate(Routes.folderRoute(folderId))
                 }
             )
         }
@@ -207,6 +214,48 @@ private fun AppNavigation(
                 viewModel = chatViewModel,
                 conversationId = conversationId,
                 preferenceRepository = preferenceRepository,
+                onNavigateBack = { navController.popBackStack() },
+                // "Remember this" opens the file it just wrote to. The write is never silent.
+                onOpenProjectMemory = { folderId ->
+                    navController.navigate(Routes.projectFileRoute(folderId, ProjectFile.MEMORY))
+                }
+            )
+        }
+
+        composable(
+            route = Routes.FOLDER,
+            arguments = listOf(navArgument("folderId") { type = NavType.LongType })
+        ) { backStackEntry ->
+            val folderId = backStackEntry.arguments?.getLong("folderId") ?: return@composable
+            val app = LocalContext.current.applicationContext as MaskanApplication
+            val projectFilesViewModel = remember(folderId) { app.provideProjectFilesViewModel() }
+            FolderScreen(
+                viewModel = projectFilesViewModel,
+                folderId = folderId,
+                onNavigateBack = { navController.popBackStack() },
+                onOpenFile = { file ->
+                    navController.navigate(Routes.projectFileRoute(folderId, file))
+                }
+            )
+        }
+
+        composable(
+            route = Routes.PROJECT_FILE,
+            arguments = listOf(
+                navArgument("folderId") { type = NavType.LongType },
+                navArgument("file") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val folderId = backStackEntry.arguments?.getLong("folderId") ?: return@composable
+            val file = backStackEntry.arguments?.getString("file") ?: ProjectFile.INSTRUCTIONS
+            val app = LocalContext.current.applicationContext as MaskanApplication
+            // Keyed on both: Instructions and Memory are separate visits to separate files, and a
+            // shared instance would carry the first file's draft into the second.
+            val projectFilesViewModel = remember(folderId, file) { app.provideProjectFilesViewModel() }
+            ProjectFileEditorScreen(
+                viewModel = projectFilesViewModel,
+                folderId = folderId,
+                file = file,
                 onNavigateBack = { navController.popBackStack() }
             )
         }
@@ -236,6 +285,11 @@ private fun AppNavigation(
                 onNavigateToAbout = { navController.navigate(Routes.ABOUT) },
                 onNavigateToPrivacy = { navController.navigate(Routes.PRIVACY) },
                 onLocaleChanged = { onRestart() },
+                onEditSharedMemory = {
+                    navController.navigate(
+                        Routes.projectFileRoute(ProjectFilesViewModel.GLOBAL_SCOPE, ProjectFile.MEMORY)
+                    )
+                },
                 isFirstLaunch = isFirstLaunchSettings
             )
         }

@@ -24,6 +24,7 @@ import app.maskan.chat.data.repository.KeyRepository
 import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.util.ErrorMapper
 import app.maskan.chat.util.ImageStore
+import app.maskan.chat.util.ProjectMemory
 import app.maskan.chat.util.ImageUtils
 import app.maskan.chat.video.VideoJobs
 import app.maskan.chat.video.VideoOptions
@@ -94,6 +95,14 @@ data class ChatUiState(
      * pushed straight into the composer so the user always sees what changed before it is drawn.
      */
     val improvedPrompt: String? = null,
+    /** The folder this conversation is in, and its name, for "remember this". */
+    val folderId: Long? = null,
+    val folderName: String = "",
+    /**
+     * Set when a fact has just been remembered: the folder it went into, or GLOBAL_SCOPE for the
+     * shared file. The screen turns it into a toast and a trip to the editor, then clears it.
+     */
+    val rememberedFolderId: Long? = null,
     /**
      * Live render state per pending video message, fed by the WorkManager worker's progress
      * data. Absent for a message whose worker has not reported yet (the bubble shows
@@ -166,11 +175,14 @@ class ChatViewModel(
                 ?: ProviderRegistry.getProvider(providerId)?.defaultModel
                 ?: ProviderRegistry.getDefaultProvider().defaultModel
 
+            val folder = conversation?.folderId?.let { chatRepository.getFolder(it) }
             _uiState.value = _uiState.value.copy(
                 selectedProviderId = providerId,
                 selectedModel = model,
                 currentPreset = preset,
                 presetSelected = conversation?.systemPromptId != null,
+                folderId = folder?.id,
+                folderName = folder?.name.orEmpty(),
                 selectedImageModelName = keyRepository.getSelectedImageModel(providerId).orEmpty(),
                 selectedVideoModelName = keyRepository.getSelectedVideoModel(providerId).orEmpty(),
                 // A remembered "576x1024" means nothing to Veo and "16:9" nothing to Wan.
@@ -586,6 +598,18 @@ class ChatViewModel(
             editImage(content)
             return
         }
+        // "Remember this", typed. A local command, not a request: nothing goes to a provider, and
+        // the memory file opens showing the line that was written. Checked after the three generate
+        // modes so an armed drawing still draws, and only where there is somewhere to remember TO -
+        // in a chat with no folder and shared memory off, "remember that..." is just a sentence.
+        if (rememberTarget() != null) {
+            val fact = ProjectMemory.factOrNull(content)
+            if (fact != null) {
+                rememberFact(fact)
+                return
+            }
+        }
+
         if (content.isBlank() && _uiState.value.pendingImageBytes == null && _uiState.value.pendingFileText == null) return
 
         val imageData = _uiState.value.pendingImageBytes
@@ -698,7 +722,8 @@ class ChatViewModel(
         if (kind != "image" && kind != "edit") return
         val maskan = getApplication<Application>() as? MaskanApplication ?: return
         if (maskan.isInForeground) return
-        val title = maskan.getString(
+        // localizedContext, not maskan: this string is read with no Activity in the picture.
+        val title = maskan.localizedContext.getString(
             when {
                 kind == "edit" && success -> R.string.edit_ready
                 kind == "edit" -> R.string.edit_failed
@@ -900,6 +925,50 @@ class ChatViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * Where a remembered fact would go: this conversation's folder, or the shared file when the
+     * user has turned it on, or nowhere.
+     */
+    fun rememberTarget(): Long? {
+        _uiState.value.folderId?.let { return it }
+        return if (preferenceRepository.isGlobalMemoryEnabled()) {
+            ProjectFilesViewModel.GLOBAL_SCOPE
+        } else {
+            null
+        }
+    }
+
+    /**
+     * Append one dated line to the memory file and tell the screen to open it.
+     *
+     * Read-modify-write rather than an SQL append: the file is a few hundred bytes, the user is
+     * the only other writer, and re-reading means the line lands after whatever they last typed
+     * in the editor rather than after whatever was cached here.
+     */
+    fun rememberFact(fact: String) {
+        val target = rememberTarget() ?: return
+        val trimmed = fact.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            if (target == ProjectFilesViewModel.GLOBAL_SCOPE) {
+                preferenceRepository.setGlobalMemory(
+                    ProjectMemory.append(preferenceRepository.getGlobalMemory(), trimmed)
+                )
+            } else {
+                val folder = chatRepository.getFolder(target)
+                chatRepository.updateFolderMemory(
+                    target,
+                    ProjectMemory.append(folder?.memory, trimmed)
+                )
+            }
+            _uiState.value = _uiState.value.copy(rememberedFolderId = target)
+        }
+    }
+
+    fun clearRemembered() {
+        _uiState.value = _uiState.value.copy(rememberedFolderId = null)
     }
 
     fun clearError() {

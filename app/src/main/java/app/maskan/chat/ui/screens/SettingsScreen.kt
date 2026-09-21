@@ -40,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,10 +76,16 @@ fun SettingsScreen(
     onNavigateToPrivacy: () -> Unit = {},
     onLocaleChanged: () -> Unit = {},
     onModelChanged: (String) -> Unit = {},
+    /** Opens the shared memory file in the same editor a folder's files use. */
+    onEditSharedMemory: () -> Unit = {},
     isFirstLaunch: Boolean = false
 ) {
     val isArabic = isAppArabic()
     val state by viewModel.uiState.collectAsState()
+
+    // The shared memory file is edited on another destination and lives in the preferences, which
+    // have no flow. Coming back here recomposes this, which is the moment to look at it again.
+    LaunchedEffect(Unit) { viewModel.refreshGlobalMemory() }
 
     val allProviders = viewModel.allProviders
     val selectedProvider = state.selectedProvider
@@ -1020,6 +1027,54 @@ fun SettingsScreen(
                         }
                     }
                 )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Shared memory - one memory file for every chat, in a folder or not
+            Text(
+                text = stringResource(R.string.global_memory_label),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.global_memory_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Switch(
+                    checked = state.globalMemoryEnabled,
+                    onCheckedChange = { viewModel.toggleGlobalMemory() }
+                )
+            }
+            TextButton(onClick = onEditSharedMemory) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.global_memory_edit),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (state.globalMemoryTokens > 0) {
+                        Text(
+                            text = stringResource(
+                                R.string.token_meter_short,
+                                formatTokens(state.globalMemoryTokens)
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))

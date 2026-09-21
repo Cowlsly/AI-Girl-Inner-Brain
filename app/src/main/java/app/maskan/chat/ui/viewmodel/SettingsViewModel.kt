@@ -12,6 +12,7 @@ import app.maskan.chat.data.repository.ChatRepository
 import app.maskan.chat.data.repository.KeyRepository
 import app.maskan.chat.data.repository.LocaleRepository
 import app.maskan.chat.data.repository.PreferenceRepository
+import app.maskan.chat.util.TokenEstimate
 import app.maskan.chat.util.ErrorMapper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,6 +64,9 @@ data class SettingsUiState(
     val selectedDialect: Dialect = Dialect.MSA,
     val configuredProviderIds: Set<String> = emptySet(),
     val blockScreenshots: Boolean = false,
+    /** The one memory file that is not tied to a folder. Off until the user turns it on. */
+    val globalMemoryEnabled: Boolean = false,
+    val globalMemoryTokens: Int = 0,
     val fetchedModels: List<String> = emptyList(),
     val fetchModelsState: FetchModelsState = FetchModelsState.Idle,
     val modelsFetchedAt: Long = 0L,
@@ -104,6 +108,8 @@ class SettingsViewModel(
             selectedDialect = preferenceRepository.getDefaultDialect(),
             configuredProviderIds = keyRepository.getAllStoredProviderIds().toSet(),
             blockScreenshots = preferenceRepository.isBlockScreenshots(),
+            globalMemoryEnabled = preferenceRepository.isGlobalMemoryEnabled(),
+            globalMemoryTokens = TokenEstimate.of(preferenceRepository.getGlobalMemory()),
             fetchedModels = preferenceRepository.getCachedModels(provider.id),
             modelsFetchedAt = preferenceRepository.getModelsFetchedAt(provider.id),
             unavailableModels = preferenceRepository.getUnavailableModels(provider.id),
@@ -429,6 +435,24 @@ class SettingsViewModel(
         preferenceRepository.setBlockScreenshots(newValue)
         _uiState.value = _uiState.value.copy(blockScreenshots = newValue)
         return newValue
+    }
+
+    fun toggleGlobalMemory(): Boolean {
+        val newValue = !_uiState.value.globalMemoryEnabled
+        preferenceRepository.setGlobalMemoryEnabled(newValue)
+        _uiState.value = _uiState.value.copy(globalMemoryEnabled = newValue)
+        return newValue
+    }
+
+    /**
+     * Re-read the shared memory count. The editor is a separate destination writing to the
+     * preferences, which have no flow, so coming back from it is the moment to look again.
+     */
+    fun refreshGlobalMemory() {
+        _uiState.value = _uiState.value.copy(
+            globalMemoryEnabled = preferenceRepository.isGlobalMemoryEnabled(),
+            globalMemoryTokens = TokenEstimate.of(preferenceRepository.getGlobalMemory())
+        )
     }
 
     /** Models the provider prices at zero - they work even with an empty account balance. */

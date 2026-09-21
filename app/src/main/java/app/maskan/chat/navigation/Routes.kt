@@ -13,5 +13,18 @@ object Routes {
     const val PRIVACY_INTRO = "privacy_intro"
     const val PRIVACY = "privacy"
 
+    /** A folder seen as a project: its instructions and memory files. */
+    const val FOLDER = "folder/{folderId}"
+
+    /**
+     * One project file, open for editing. `folderId` 0 is the SHARED memory file, which belongs
+     * to no folder - Room autogenerates folder ids from 1, so the two can never collide.
+     */
+    const val PROJECT_FILE = "project_file/{folderId}/{file}"
+
     fun chatRoute(conversationId: Long) = "chat/$conversationId"
+
+    fun folderRoute(folderId: Long) = "folder/$folderId"
+
+    fun projectFileRoute(folderId: Long, file: String) = "project_file/$folderId/$file"
 }

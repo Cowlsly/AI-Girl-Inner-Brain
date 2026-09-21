@@ -107,6 +107,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -124,6 +125,7 @@ import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.ui.theme.maskanColors
 import app.maskan.chat.data.repository.ExportFormat
 import app.maskan.chat.ui.viewmodel.ChatViewModel
+import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -134,7 +136,9 @@ fun ChatScreen(
     viewModel: ChatViewModel,
     conversationId: Long,
     preferenceRepository: PreferenceRepository,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    /** Where a remembered fact was just written: the folder's memory, or the shared file. */
+    onOpenProjectMemory: (Long) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var inputText by rememberSaveable { mutableStateOf("") }
@@ -148,6 +152,22 @@ fun ChatScreen(
     val tts = remember { mutableStateOf<TextToSpeech?>(null) }
     var ttsReady by remember { mutableStateOf(false) }
     var speakingMessageId by remember { mutableStateOf<Long?>(null) }
+
+    // A fact has just been remembered: say where, then open the file so the line that was written
+    // is visible. Nothing in this app writes to memory without showing the result.
+    val rememberedFolderId = uiState.rememberedFolderId
+    LaunchedEffect(rememberedFolderId) {
+        if (rememberedFolderId != null) {
+            val message = if (rememberedFolderId == ProjectFilesViewModel.GLOBAL_SCOPE) {
+                context.getString(R.string.remembered_in_shared_memory)
+            } else {
+                context.getString(R.string.remembered_in_folder, uiState.folderName)
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            viewModel.clearRemembered()
+            onOpenProjectMemory(rememberedFolderId)
+        }
+    }
 
     DisposableEffect(Unit) {
         // Readiness depends ONLY on the init status — never on dereferencing the engine inside
@@ -663,6 +683,13 @@ fun ChatScreen(
                                 shareImageBytes(context, bytes, message.imageMimeType ?: "image/png")
                             }
                         },
+                        onRemember = if (message.content.isNotBlank() &&
+                            viewModel.rememberTarget() != null
+                        ) {
+                            { viewModel.rememberFact(message.content) }
+                        } else {
+                            null
+                        },
                         onSpeakToggle = {
                             val engine = tts.value
                             if (!ttsReady || engine == null) {
@@ -925,7 +952,16 @@ private fun MessageBubble(
     pendingKind: String? = null,
     pendingSince: Long = 0L,
     onSaveImage: () -> Unit = {},
-    onShareImage: () -> Unit = {}
+    onShareImage: () -> Unit = {},
+    /**
+     * Null when this conversation has nowhere to remember to - no folder, and shared memory off.
+     *
+     * Deliberately a button in the footer row and not a long press on the bubble: the text is
+     * inside a SelectionContainer, and on the device a long press raised our menu AND Compose's
+     * Copy / Select all toolbar at the same time, one drawn over the other. There is no gesture
+     * to share with selection, so this takes a tap of its own.
+     */
+    onRemember: (() -> Unit)? = null
 ) {
     val backgroundColor = if (isUser) MaterialTheme.maskanColors.userBubble else MaterialTheme.maskanColors.assistantBubble
 
@@ -1061,6 +1097,16 @@ private fun MessageBubble(
                         Text(
                             text = stringResource(R.string.share_image),
                             style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+                if (onRemember != null) {
+                    IconButton(onClick = onRemember) {
+                        Icon(
+                            imageVector = Icons.Default.BookmarkAdd,
+                            contentDescription = stringResource(R.string.add_to_project_memory),
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }

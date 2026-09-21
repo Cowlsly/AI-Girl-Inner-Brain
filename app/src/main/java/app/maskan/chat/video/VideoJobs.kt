@@ -72,7 +72,15 @@ data class VideoProgress(
  * One unique work item per message row, keyed by the row id, KEEP policy - so resuming on app
  * start never doubles up a job that is already being polled.
  */
-class VideoJobs(private val context: Context) {
+/**
+ * [context] is what schedules work and posts notifications; [strings] is where their TEXT comes
+ * from. They are usually the same object and must not be assumed to be: notification text has to
+ * be in the language the user chose for Maskan, which the application context does not know.
+ */
+class VideoJobs(
+    private val context: Context,
+    private val strings: () -> Context = { context }
+) {
 
     fun enqueue(messageId: Long, conversationId: Long, providerId: String) {
         val request = OneTimeWorkRequestBuilder<VideoRenderWorker>()
@@ -118,10 +126,13 @@ class VideoJobs(private val context: Context) {
     fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (manager.getNotificationChannel(CHANNEL_ID) != null) return
+        // No "already exists" guard: re-creating a channel under the same id updates its NAME
+        // and description and leaves the user's own importance and sound choices alone. With the
+        // guard, the name froze at whatever language the phone was in the first time a render
+        // ran, and Settings went on saying "Finished renders" to someone using the app in Thai.
         val channel = NotificationChannel(
             CHANNEL_ID,
-            context.getString(R.string.video_notification_channel),
+            strings().getString(R.string.video_notification_channel),
             NotificationManager.IMPORTANCE_LOW
         ).apply { setShowBadge(false) }
         manager.createNotificationChannel(channel)
@@ -163,10 +174,10 @@ class VideoJobs(private val context: Context) {
     fun ensureDoneChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (manager.getNotificationChannel(DONE_CHANNEL_ID) != null) return
+        // Re-created every time, so the name follows the UI language. See ensureChannel.
         val channel = NotificationChannel(
             DONE_CHANNEL_ID,
-            context.getString(R.string.render_done_channel),
+            strings().getString(R.string.render_done_channel),
             NotificationManager.IMPORTANCE_DEFAULT
         )
         manager.createNotificationChannel(channel)
@@ -176,7 +187,7 @@ class VideoJobs(private val context: Context) {
         showDone(
             messageId = messageId,
             conversationId = conversationId,
-            title = context.getString(if (success) R.string.video_ready else R.string.video_failed),
+            title = strings().getString(if (success) R.string.video_ready else R.string.video_failed),
             detail = detail
         )
     }
@@ -212,9 +223,9 @@ class VideoJobs(private val context: Context) {
         ensureChannel()
         val cancelIntent = WorkManager.getInstance(context).createCancelPendingIntent(workId)
         val text = when (progress.phase) {
-            "expanding" -> context.getString(R.string.video_writing_scene)
+            "expanding" -> strings().getString(R.string.video_writing_scene)
             "rendering", "done" -> progress.etaSeconds?.let { eta ->
-                context.getString(R.string.video_eta_minutes, maxOf(1, (eta + 59) / 60))
+                strings().getString(R.string.video_eta_minutes, maxOf(1, (eta + 59) / 60))
             } ?: context.getString(R.string.video_making)
             else -> context.getString(R.string.video_waiting_server)
         }

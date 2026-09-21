@@ -81,6 +81,7 @@ import app.maskan.chat.ui.theme.WarmPeach
 import app.maskan.chat.ui.theme.WarmSand
 import app.maskan.chat.ui.theme.maskanColors
 import app.maskan.chat.ui.viewmodel.ConversationListViewModel
+import app.maskan.chat.util.TokenEstimate
 
 internal val FOLDER_PASTELS = listOf(
     WarmPeach, MintGreen, SoftLavender, PalePink, SoftCoral, WarmSand, SkyBlue
@@ -138,7 +139,8 @@ internal fun PastelColorRow(selected: Color, onSelect: (Color) -> Unit) {
 fun ConversationListScreen(
     viewModel: ConversationListViewModel,
     onNavigateToChat: (Long) -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onOpenProjectFiles: (Long) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
@@ -148,8 +150,6 @@ fun ConversationListScreen(
     var folderToRename by remember { mutableStateOf<FolderEntity?>(null) }
     var folderToDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
     var folderToRecolor by remember { mutableStateOf<FolderEntity?>(null) }
-    // Debug builds only - the scratch editor for the 2.6 folder spine. See DebugFolderFilesDialog.
-    var folderToEditFiles by remember { mutableStateOf<FolderEntity?>(null) }
     var conversationToMove by remember { mutableStateOf<ConversationEntity?>(null) }
     val expandedFolders = remember { mutableStateMapOf<Long?, Boolean>() }
 
@@ -358,12 +358,18 @@ fun ConversationListScreen(
                                 color = colorFromHex(folder.colorHex),
                                 expanded = folderExpanded,
                                 onToggle = { expandedFolders[folder.id] = !folderExpanded },
-                                onLongClick = { showMenu = true }
+                                onLongClick = { showMenu = true },
+                                projectTokens = TokenEstimate.of(folder.instructions) +
+                                    TokenEstimate.of(folder.memory)
                             )
                             DropdownMenu(
                                 expanded = showMenu,
                                 onDismissRequest = { showMenu = false }
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.project_files)) },
+                                    onClick = { showMenu = false; onOpenProjectFiles(folder.id) }
+                                )
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.rename_folder)) },
                                     onClick = { showMenu = false; folderToRename = folder }
@@ -376,12 +382,6 @@ fun ConversationListScreen(
                                     text = { Text(stringResource(R.string.delete_folder)) },
                                     onClick = { showMenu = false; folderToDeleteId = folder.id }
                                 )
-                                if (app.maskan.chat.BuildConfig.DEBUG) {
-                                    DropdownMenuItem(
-                                        text = { Text("Project files (debug)") },
-                                        onClick = { showMenu = false; folderToEditFiles = folder }
-                                    )
-                                }
                             }
                         }
                     }
@@ -457,21 +457,6 @@ fun ConversationListScreen(
                 }
             }
         )
-    }
-
-    folderToEditFiles?.let { folder ->
-        if (app.maskan.chat.BuildConfig.DEBUG) {
-            DebugFolderFilesDialog(
-                folderName = folder.name,
-                instructions = folder.instructions.orEmpty(),
-                memory = folder.memory.orEmpty(),
-                onDismiss = { folderToEditFiles = null },
-                onSave = { instructions, memory ->
-                    viewModel.setFolderFiles(folder.id, instructions, memory)
-                    folderToEditFiles = null
-                }
-            )
-        }
     }
 
     folderToRecolor?.let { folder ->

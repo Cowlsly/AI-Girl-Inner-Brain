@@ -5,4 +5,5 @@
          reachable through the provider, and the encrypted originals never leave filesDir.
     -->
     <cache-path name="shared_images" path="shared_images/" />
+    <cache-path name="shared_files" path="shared_files/" />
 </paths>

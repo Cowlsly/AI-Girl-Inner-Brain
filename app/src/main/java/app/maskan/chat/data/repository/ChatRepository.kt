@@ -34,6 +34,7 @@ class ChatRepository(
     private val folderDao: FolderDao,
     private val keyRepository: KeyRepository,
     private val localeRepository: LocaleRepository,
+    private val preferenceRepository: PreferenceRepository,
     private val imageStore: ImageStore,
     private val videoJobClient: VideoJobClient,
     private val videoBackendFor: (String) -> VideoBackend,
@@ -919,26 +920,61 @@ class ChatRepository(
      * behave the opposite way - edit the text, and the chat opened last week obeys it on its
      * next message. Nothing here is ever written to the conversation.
      */
-    private suspend fun projectSystemText(conversation: ConversationEntity): String? {
-        val folderId = conversation.folderId ?: return null
-        val folder = folderDao.getById(folderId) ?: return null
-        val instructions = folder.instructions?.trim().orEmpty()
-        val memory = folder.memory?.trim().orEmpty()
-        if (instructions.isEmpty() && memory.isEmpty()) return null
+    private data class ProjectText(val instructions: String, val memory: String)
 
-        return buildString {
-            if (instructions.isNotEmpty()) {
-                append("### Project instructions")
-                append("\n")
-                append(instructions)
-            }
-            if (memory.isNotEmpty()) {
-                if (isNotEmpty()) append("\n\n")
-                append("### What you know about me")
-                append("\n")
-                append(memory)
-            }
+    private suspend fun projectText(conversation: ConversationEntity): ProjectText? {
+        val folder = conversation.folderId?.let { folderDao.getById(it) }
+        val instructions = folder?.instructions?.trim().orEmpty()
+        val folderMemory = folder?.memory?.trim().orEmpty()
+
+        // Global memory belongs to no folder, which is why a chat OUTSIDE every folder can carry
+        // it: "what you know about me" is about the person, not the project. It is off until the
+        // user turns it on, so on every install that has not opted in this reads empty and the
+        // 2.5.0 early return below still fires for every unfiled chat, exactly as before.
+        val globalMemory = if (preferenceRepository.isGlobalMemoryEnabled()) {
+            preferenceRepository.getGlobalMemory()?.trim().orEmpty()
+        } else {
+            ""
         }
+        if (instructions.isEmpty() && folderMemory.isEmpty() && globalMemory.isEmpty()) return null
+
+        // One section, in assembly order: the folder's memory first, then the global file. The
+        // model is being told facts; which file on this phone they came from is our business.
+        val memory = listOf(folderMemory, globalMemory)
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+
+        return ProjectText(instructions = instructions, memory = memory)
+    }
+
+    /**
+     * The system message this request will carry, within the ceiling.
+     *
+     * Which half gives way matters, and the device showed why: a folder with 7,795 tokens of
+     * instructions had its memory cut away entirely, because the clamp trims the tail and memory
+     * is assembled last - so the model kept the 40th paragraph of a style guide and lost "our
+     * office is in Jabal Amman". Memory is a handful of short facts the user asked to keep; the
+     * instructions are the part that can run to pages. So the instructions are cut to whatever
+     * the ceiling leaves after the preset and the memory, and the whole is clamped again as a
+     * backstop for the case where the memory alone is enormous.
+     */
+    private fun assembleSystemText(preset: String, project: ProjectText): String {
+        val memoryBlock = if (project.memory.isEmpty()) {
+            ""
+        } else {
+            "### What you know about me\n" + project.memory
+        }
+        val keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock)
+        val budget = (MAX_SYSTEM_TOKENS - keptTokens).coerceAtLeast(0)
+        val instructionsBlock = if (project.instructions.isEmpty()) {
+            ""
+        } else {
+            "### Project instructions\n" + TokenEstimate.clamp(project.instructions, budget)
+        }
+        val assembled = listOf(preset, instructionsBlock, memoryBlock)
+            .filter { it.isNotEmpty() }
+            .joinToString("\n\n")
+        return TokenEstimate.clamp(assembled, MAX_SYSTEM_TOKENS)
     }
 
     private suspend fun buildMessageList(conversation: ConversationEntity): List<Message> {
@@ -949,7 +985,7 @@ class ChatRepository(
         val nonSystemMessages = messages.filter { it.role != "system" }
         val recentMessages = nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
 
-        val project = projectSystemText(conversation)
+        val project = projectText(conversation)
         // A chat outside a folder, or in a folder with both files empty, must send EXACTLY what
         // 2.5.0 sent. Not nearly - exactly: this is the line that keeps the new feature from
         // quietly changing every existing conversation in the app.
@@ -965,10 +1001,7 @@ class ChatRepository(
         // anyway, and an OpenAI-shaped provider would otherwise receive two, which is the 2.5
         // trap that rejected calls outright.
         val preset = systemMessages.joinToString("\n") { it.content.textContent() }.trim()
-        val assembled = TokenEstimate.clamp(
-            if (preset.isEmpty()) project else preset + "\n\n" + project,
-            MAX_SYSTEM_TOKENS
-        )
+        val assembled = assembleSystemText(preset, project)
 
         val outgoing = listOf(Message(role = "system", text = assembled)) + recentMessages
         logContext(conversation, outgoing, "assembled")

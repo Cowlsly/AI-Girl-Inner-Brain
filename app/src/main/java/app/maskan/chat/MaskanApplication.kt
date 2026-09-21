@@ -20,6 +20,7 @@ import java.io.File
 import java.security.SecureRandom
 import android.app.LocaleManager
 import android.os.Build
+import android.content.Context
 import android.os.LocaleList
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -49,6 +50,7 @@ import app.maskan.chat.data.repository.PreferenceRepository
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import app.maskan.chat.ui.viewmodel.ChatViewModel
+import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
 import app.maskan.chat.ui.viewmodel.ConversationListViewModel
 import app.maskan.chat.ui.viewmodel.SettingsViewModel
 import kotlinx.serialization.json.Json
@@ -144,7 +146,9 @@ class MaskanApplication : Application() {
         else -> videoJobClient
     }
 
-    val videoJobs by lazy { VideoJobs(this) }
+    // The second context is where its STRINGS come from - see localizedContext. A lambda and
+    // not a value: the user can change the language while the app is running.
+    val videoJobs by lazy { VideoJobs(this) { localizedContext } }
 
     val chatRepository by lazy {
         ChatRepository(
@@ -153,6 +157,7 @@ class MaskanApplication : Application() {
             folderDao = database.folderDao(),
             keyRepository = keyRepository,
             localeRepository = localeRepository,
+            preferenceRepository = preferenceRepository,
             imageStore = imageStore,
             videoJobClient = videoJobClient,
             videoBackendFor = ::videoBackendFor,
@@ -164,6 +169,14 @@ class MaskanApplication : Application() {
 
     fun provideChatViewModel(): ChatViewModel {
         return ChatViewModel(this, chatRepository, keyRepository, preferenceRepository, imageStore)
+    }
+
+    /**
+     * One per folder-editor visit, like the chat's. Not in MaskanViewModelFactory because which
+     * folder it is looking at is a navigation argument, not something the factory can know.
+     */
+    fun provideProjectFilesViewModel(): ProjectFilesViewModel {
+        return ProjectFilesViewModel(chatRepository, preferenceRepository)
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────
@@ -328,14 +341,36 @@ class MaskanApplication : Application() {
     }
 
     private fun applySavedLocale() {
+        applyLocale(uiLanguageTag())
+    }
+
+    /** The language Maskan itself is in, as a tag. Empty means "follow the system". */
+    private fun uiLanguageTag(): String {
         val saved = localeRepository.getLocale()
-        val languageTag = when {
+        return when {
             saved.isNotEmpty() -> saved
             java.util.Locale.getDefault().language == "ar" -> "ar"
             else -> ""
         }
-        applyLocale(languageTag)
     }
+
+    /**
+     * A context whose resources speak the language the user chose for MASKAN.
+     *
+     * The Application's own resources do not. A per-app language is applied when an ACTIVITY's
+     * base context is built, so anything rendered with no Activity behind it - which is every
+     * notification this app posts - came out in the SYSTEM language instead. On a phone whose
+     * system is English and whose Maskan is Arabic, the screens were Arabic and "Video ready"
+     * was English, at the same moment, on the same phone.
+     */
+    val localizedContext: Context
+        get() {
+            val tag = uiLanguageTag()
+            if (tag.isEmpty()) return this
+            val config = android.content.res.Configuration(resources.configuration)
+            config.setLocales(LocaleList.forLanguageTags(tag))
+            return createConfigurationContext(config)
+        }
 
     fun applyLocale(languageTag: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -354,6 +389,11 @@ class MaskanApplication : Application() {
                 }
             )
         }
+        // The channel names are part of the language change. Changing the language recreates the
+        // Activity but not the process, so without this Settings -> Notifications went on showing
+        // the old language until the app was next started cold.
+        videoJobs.ensureChannel()
+        videoJobs.ensureDoneChannel()
     }
 }
 
