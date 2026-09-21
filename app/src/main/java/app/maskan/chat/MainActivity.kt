@@ -22,6 +22,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.appcompat.app.AppCompatDelegate
+import app.maskan.chat.BuildConfig
 import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.navigation.Routes
 import app.maskan.chat.ui.screens.AboutScreen
@@ -51,7 +52,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        conversationIdFrom(intent)?.let { pendingConversationId = it }
+        val id = conversationIdFrom(intent)
+        if (BuildConfig.DEBUG) android.util.Log.d("MaskanNav", "onNewIntent conversationId=" + id)
+        id?.let { pendingConversationId = it }
     }
 
     private fun conversationIdFrom(intent: Intent?): Long? =
@@ -135,8 +138,18 @@ private fun AppNavigation(
     val deepLinkAllowed = startDestination == Routes.CONVERSATION_LIST
     LaunchedEffect(deepLinkConversationId, deepLinkAllowed) {
         val target = deepLinkConversationId
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "MaskanNav",
+                "deepLink effect target=" + target + " allowed=" + deepLinkAllowed +
+                    " start=" + startDestination
+            )
+        }
         if (target != null && deepLinkAllowed) {
-            navController.navigate(Routes.chatRoute(target)) { launchSingleTop = true }
+            runCatching { navController.navigate(Routes.chatRoute(target)) { launchSingleTop = true } }
+                .onFailure {
+                    if (BuildConfig.DEBUG) android.util.Log.w("MaskanNav", "navigate failed", it)
+                }
             onDeepLinkHandled()
         }
     }

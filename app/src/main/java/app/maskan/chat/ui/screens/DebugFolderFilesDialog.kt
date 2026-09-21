@@ -1,6 +1,7 @@
 package app.maskan.chat.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -57,6 +58,12 @@ internal fun DebugFolderFilesDialog(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp)
                 )
                 Text("~" + TokenEstimate.of(draftMemory) + " tokens, sent with every message")
+                Row {
+                    TextButton(onClick = { draftInstructions = SAMPLE_AR }) { Text("ar") }
+                    TextButton(onClick = { draftInstructions = SAMPLE_LONG_AR }) { Text("ar x40") }
+                    TextButton(onClick = { draftMemory = SAMPLE_MEMORY_AR }) { Text("mem") }
+                    TextButton(onClick = { draftInstructions = ""; draftMemory = "" }) { Text("clear") }
+                }
             }
         },
         confirmButton = {
@@ -66,4 +73,27 @@ internal fun DebugFolderFilesDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+/**
+ * The acceptance-test instructions: Arabic, and it asks for a marker word that no model would
+ * emit on its own, so "did this provider obey?" is answerable by looking rather than by judging
+ * the tone of a reply.
+ */
+private const val SAMPLE_AR =
+    "أنت مساعد شركة سياحة اسمها بان إيست. أجب باختصار شديد وبالعربية دائمًا. " +
+        "ابدأ كل رد بالعلامة [PANEAST] ثم سطر جديد."
+
+private const val SAMPLE_MEMORY_AR = "- 2026-09-21: مكتبنا في جبل عمّان."
+
+/** Long enough to cross the 6,000-token clamp, so the backstop can be seen working. */
+private val SAMPLE_LONG_AR: String = buildString {
+    repeat(40) { index ->
+        append("الفقرة رقم ")
+        append(index)
+        append(": ")
+        append("هذه فقرة طويلة مكتوبة بالعربية لاختبار عدّاد الرموز وحدّ الاقتطاع في التجميع. ")
+        append("تتكرر هذه الجملة عدة مرات حتى يتجاوز النص الحد الأعلى المسموح به في الطلب الواحد.")
+        append("\n\n")
+    }
 }

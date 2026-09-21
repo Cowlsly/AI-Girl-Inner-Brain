@@ -953,7 +953,11 @@ class ChatRepository(
         // A chat outside a folder, or in a folder with both files empty, must send EXACTLY what
         // 2.5.0 sent. Not nearly - exactly: this is the line that keeps the new feature from
         // quietly changing every existing conversation in the app.
-        if (project == null) return systemMessages + recentMessages
+        if (project == null) {
+            val plain = systemMessages + recentMessages
+            logContext(conversation, plain, "2.5.0-shape")
+            return plain
+        }
 
         // One system message, always. The preset's row stays in the database (it is the user's
         // record of what this chat was set up as) but it is REPLACED in the outgoing request by
@@ -966,16 +970,35 @@ class ChatRepository(
             MAX_SYSTEM_TOKENS
         )
 
-        if (BuildConfig.DEBUG) {
-            android.util.Log.d(
-                "Maskan",
-                "system assembled for conv=" + conversation.id + " folder=" + conversation.folderId +
-                    " preset=" + preset.length + "ch project=" + project.length +
-                    "ch sent=" + assembled.length + "ch ~" + TokenEstimate.of(assembled) + "tok"
-            )
-        }
+        val outgoing = listOf(Message(role = "system", text = assembled)) + recentMessages
+        logContext(conversation, outgoing, "assembled")
+        return outgoing
+    }
 
-        return listOf(Message(role = "system", text = assembled)) + recentMessages
+    /**
+     * What is actually about to go on the wire, in the debug log: how many messages, in what
+     * roles, and the whole system text.
+     *
+     * The alternative - turning the OkHttp interceptor up to BODY - would write the
+     * Authorization header, i.e. real API keys, into logcat. This says everything the folder
+     * work needs checking against and nothing secret: the system text is the user's own
+     * instructions on the user's own phone.
+     */
+    private fun logContext(conversation: ConversationEntity, messages: List<Message>, shape: String) {
+        if (!BuildConfig.DEBUG) return
+        val system = messages.filter { it.role == "system" }
+        val systemText = system.joinToString(" | ") { it.content.textContent() }
+        android.util.Log.d(
+            "MaskanCtx",
+            "conv=" + conversation.id + " folder=" + conversation.folderId +
+                " provider=" + conversation.providerId + " shape=" + shape +
+                " msgs=" + messages.size + " systems=" + system.size +
+                " sysTokens=" + TokenEstimate.of(systemText) +
+                " roles=" + messages.joinToString(",") { it.role }
+        )
+        if (systemText.isNotEmpty()) {
+            android.util.Log.d("MaskanCtx", "system<<" + systemText + ">>")
+        }
     }
 
     companion object {
