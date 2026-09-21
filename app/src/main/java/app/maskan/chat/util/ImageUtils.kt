@@ -19,6 +19,25 @@ object ImageUtils {
     /** Backstop, not a target: at 1,536 px quality 85 lands far below this for ordinary scenes. */
     const val CAMERA_MAX_KB = 900
 
+    /**
+     * JPEG bytes for an already-sized bitmap, dropping quality until it fits [maxSizeKb].
+     *
+     * Split out of compressImage so a rendered PDF page goes through exactly the same ladder as
+     * a camera photo - the whole point of reusing the camera's numbers is undone if the page
+     * takes a different route to a JPEG. Does not recycle the bitmap: the caller owns it.
+     */
+    fun compressBitmap(bitmap: Bitmap, maxSizeKb: Int): ByteArray {
+        var quality = 85
+        var compressed: ByteArray
+        do {
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            compressed = out.toByteArray()
+            quality -= 10
+        } while (compressed.size > maxSizeKb * 1024 && quality > 10)
+        return compressed
+    }
+
     fun compressImage(
         context: Context,
         uri: Uri,
@@ -54,14 +73,7 @@ object ImageUtils {
             bitmap
         }
 
-        var quality = 85
-        var compressed: ByteArray
-        do {
-            val out = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
-            compressed = out.toByteArray()
-            quality -= 10
-        } while (compressed.size > maxSizeKb * 1024 && quality > 10)
+        val compressed = compressBitmap(scaled, maxSizeKb)
 
         scaled.recycle()
 

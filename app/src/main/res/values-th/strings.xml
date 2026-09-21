@@ -152,10 +152,10 @@
     <!-- File input -->
     <string name="attach_file">แนบไฟล์ข้อความ</string>
     <string name="remove_file">ลบไฟล์</string>
-    <string name="file_too_large">ไฟล์ใหญ่เกินไป (สูงสุด 50 KB ของข้อความ) กรุณาเลือกไฟล์ที่เล็กกว่า</string>
+    <string name="file_too_large">ไฟล์ใหญ่เกินไป Maskan อ่านไฟล์ได้ถึง 25 MB</string>
     <string name="file_read_error">ไม่สามารถอ่านไฟล์นี้ได้</string>
     <string name="attach_choose_image">รูปภาพ</string>
-    <string name="attach_choose_file">ไฟล์ข้อความ (.txt, .html)</string>
+    <string name="attach_choose_file">ไฟล์ (.pdf, .docx, .xlsx, .txt)</string>
     <string name="attach_type_title">แนบ</string>
 
     <!-- Markdown -->
@@ -391,4 +391,35 @@
     <string name="camera_prompt_translate">แปลข้อความทั้งหมดในรูปนี้เป็นภาษาไทย โดยเรียงบรรทัดตามลำดับเดิม</string>
     <string name="camera_prompt_read_aloud">อ่านข้อความในรูปนี้ แล้วบอกสั้นๆ หนึ่งบรรทัดว่านี่คืออะไร</string>
     <string name="camera_prompt_what_is_this">ในรูปนี้มีอะไร อธิบายสั้นๆ ด้วยคำง่ายๆ</string>
+    <string name="document_legacy_format">Maskan อ่านไฟล์ .doc .xls หรือ .ppt ไม่ได้ กรุณาบันทึกเป็น .docx .xlsx หรือ PDF แล้วแนบใหม่</string>
+    <string name="document_macro_format">Maskan อ่านไฟล์ที่มีมาโคร (.docm, .xlsm) ไม่ได้ กรุณาบันทึกเป็น .docx หรือ .xlsx แล้วแนบใหม่</string>
+    <string name="document_encrypted">ไฟล์ PDF นี้มีรหัสผ่าน กรุณาลบรหัสผ่านแล้วแนบใหม่</string>
+    <string name="document_cert_encrypted">ไฟล์ PDF นี้เข้ารหัสด้วยใบรับรอง Maskan เปิดไม่ได้</string>
+    <string name="document_empty">ไม่มีข้อความในไฟล์นี้</string>
+    <string name="document_scan_no_vision">ไฟล์ PDF นี้เป็นภาพสแกน และโมเดลปัจจุบันดูภาพไม่ได้ กรุณาเลือกโมเดลที่ดูภาพได้แล้วแนบใหม่</string>
+    <string name="document_scan_title">ไม่มีข้อความใน PDF นี้</string>
+    <string name="document_scan_body">\'%1$s\' ดูเหมือนภาพสแกน — %2$d หน้า ไม่มีข้อความให้อ่าน ส่ง 3 หน้าแรกเป็นภาพแทนไหม</string>
+    <string name="document_scan_send">ส่งหน้าเหล่านี้</string>
+    <string name="document_pages_question">อ่านหน้าเหล่านี้แล้วบอกฉันว่ามีอะไรอยู่</string>
+    <string name="document_page_label">หน้า %1$d จาก %2$s</string>
+    <string name="document_cost_title">อ่านไฟล์นี้ไหม</string>
+    <string name="document_cost_body">\'%1$s\' ยาวประมาณ %2$d โทเค็น การอ่านใช้คำขอประมาณ %3$d ครั้ง คุณหยุดเมื่อใดก็ได้ และถามเกี่ยวกับส่วนที่อ่านแล้ว</string>
+    <string name="document_cost_continue">อ่านเลย</string>
+    <string name="document_reading_file">กำลังอ่านไฟล์…</string>
+    <string name="document_notes_title">บันทึกย่อของเอกสาร</string>
+    <string name="document_progress">อ่านแล้ว %1$d จาก %2$d ส่วน</string>
+    <string name="document_read_done">อ่านครบแล้ว</string>
+    <string name="document_continue">อ่านต่อ</string>
+    <string name="document_stop">หยุด</string>
+    <string name="document_remove">นำออก</string>
+    <string name="document_waiting">ผู้ให้บริการไม่ว่าง — ลองใหม่ใน %1$d วินาที</string>
+    <string name="document_not_read">อ่านเฉพาะข้อความและค่าในเซลล์ ภาพ รูปแบบ แผนภูมิ ความคิดเห็น และสูตรเบื้องหลังค่าจะไม่ถูกอ่าน</string>
+    <string name="document_warn_arabic">ข้อความภาษาอาหรับในไฟล์นี้ถูกเก็บเป็นรูปร่างตัวอักษร ลำดับคำอาจสลับกัน</string>
+    <string name="document_warn_pages">อ่านแล้ว %1$d จาก %2$d หน้า</string>
+    <string name="document_warn_rows">อ่านแล้ว %1$d จาก %2$d แถว</string>
+    <string name="document_pages_chip">%1$d หน้าจาก %2$s</string>
+    <string name="document_meta_pages">%1$d หน้า</string>
+    <string name="document_meta_tokens">ประมาณ %1$d โทเค็น</string>
+    <string name="document_show_notes">แสดงบันทึกย่อ</string>
+    <string name="document_hide_notes">ซ่อนบันทึกย่อ</string>
 </resources>

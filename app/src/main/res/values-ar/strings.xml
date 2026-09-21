@@ -152,10 +152,10 @@
     <!-- File input -->
     <string name="attach_file">إرفاق ملف نصي</string>
     <string name="remove_file">إزالة الملف</string>
-    <string name="file_too_large">الملف كبير جداً (الحد الأقصى 50 كيلوبايت من النص). اختر ملفاً أصغر.</string>
+    <string name="file_too_large">هذا الملف كبير جداً. يقرأ مسكن ملفات حتى 25 ميغابايت.</string>
     <string name="file_read_error">تعذّر قراءة هذا الملف.</string>
     <string name="attach_choose_image">صورة</string>
-    <string name="attach_choose_file">ملف نصي (.txt, .html)</string>
+    <string name="attach_choose_file">ملف (.pdf, .docx, .xlsx, .txt)</string>
     <string name="attach_type_title">إرفاق</string>
 
     <!-- Markdown -->
@@ -391,4 +391,35 @@
     <string name="camera_prompt_translate">ترجم كل النص في هذه الصورة إلى العربية، مع إبقاء السطور بالترتيب نفسه.</string>
     <string name="camera_prompt_read_aloud">اقرأ النص الذي في هذه الصورة، ثم اشرح في سطر واحد ما هذا.</string>
     <string name="camera_prompt_what_is_this">ما الذي في هذه الصورة؟ اشرح باختصار وبكلمات بسيطة.</string>
+    <string name="document_legacy_format">لا يقرأ مسكن ملفات .doc أو .xls أو .ppt. احفظ الملف بصيغة .docx أو .xlsx أو PDF ثم أرفقه مرة أخرى.</string>
+    <string name="document_macro_format">لا يقرأ مسكن الملفات التي تحمل ماكرو (.docm و.xlsm). احفظ الملف بصيغة .docx أو .xlsx ثم أرفقه مرة أخرى.</string>
+    <string name="document_encrypted">هذا الملف محمي بكلمة مرور. أزل كلمة المرور ثم أرفقه مرة أخرى.</string>
+    <string name="document_cert_encrypted">هذا الملف مشفّر بشهادة، وتعذّر على مسكن فتحه.</string>
+    <string name="document_empty">لا يوجد نص في هذا الملف.</string>
+    <string name="document_scan_no_vision">هذا الملف صورة ممسوحة، والنموذج الحالي لا ينظر إلى الصور. اختر نموذجاً يرى ثم أرفقه مرة أخرى.</string>
+    <string name="document_scan_title">لا نص في هذا الملف</string>
+    <string name="document_scan_body">يبدو \'%1$s\' صورة ممسوحة — عدد صفحاته %2$d ولا نص فيه يُقرأ. هل نرسل أول 3 صفحات صوراً؟</string>
+    <string name="document_scan_send">أرسل الصفحات</string>
+    <string name="document_pages_question">اقرأ هذه الصفحات وأخبرني بما فيها.</string>
+    <string name="document_page_label">صفحة %1$d من %2$s</string>
+    <string name="document_cost_title">أنقرأ هذا الملف؟</string>
+    <string name="document_cost_body">الملف \'%1$s\' — عدد الرموز نحو %2$d، والطلبات اللازمة لقراءته نحو %3$d. يمكنك الإيقاف في أي لحظة والسؤال عمّا قُرئ.</string>
+    <string name="document_cost_continue">اقرأه</string>
+    <string name="document_reading_file">جارٍ قراءة الملف…</string>
+    <string name="document_notes_title">ملاحظات المستند</string>
+    <string name="document_progress">الأجزاء المقروءة: %1$d من %2$d</string>
+    <string name="document_read_done">قُرئ كاملاً</string>
+    <string name="document_continue">تابع القراءة</string>
+    <string name="document_stop">أوقف</string>
+    <string name="document_remove">أزل</string>
+    <string name="document_waiting">المزود مشغول — إعادة المحاولة بعد %1$d ث</string>
+    <string name="document_not_read">النص وقيم الخلايا فقط. الصور والتنسيق والرسوم والتعليقات والمعادلة خلف القيمة لا تُقرأ.</string>
+    <string name="document_warn_arabic">خُزّن النص العربي في هذا الملف على هيئة أشكال حروف، وقد يكون ترتيب كلماته مضطرباً.</string>
+    <string name="document_warn_pages">الصفحات المقروءة: %1$d من %2$d.</string>
+    <string name="document_warn_rows">الصفوف المقروءة: %1$d من %2$d.</string>
+    <string name="document_pages_chip">%1$d صفحات من %2$s</string>
+    <string name="document_meta_pages">الصفحات: %1$d</string>
+    <string name="document_meta_tokens">الرموز: نحو %1$d</string>
+    <string name="document_show_notes">أظهر الملاحظات</string>
+    <string name="document_hide_notes">أخف الملاحظات</string>
 </resources>

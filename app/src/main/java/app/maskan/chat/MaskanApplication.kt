@@ -155,6 +155,7 @@ class MaskanApplication : Application() {
             conversationDao = database.conversationDao(),
             messageDao = database.messageDao(),
             folderDao = database.folderDao(),
+            documentDao = database.documentDao(),
             keyRepository = keyRepository,
             localeRepository = localeRepository,
             preferenceRepository = preferenceRepository,

@@ -458,6 +458,61 @@ fun ChatScreen(
         )
     }
 
+    uiState.documentCost?.let { cost ->
+        AlertDialog(
+            onDismissRequest = { viewModel.cancelDocumentCost() },
+            title = { Text(stringResource(R.string.document_cost_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(
+                            R.string.document_cost_body,
+                            cost.doc.name,
+                            cost.tokens,
+                            cost.requests
+                        )
+                    )
+                    Text(
+                        text = stringResource(R.string.document_not_read),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmDocumentCost() }) {
+                    Text(stringResource(R.string.document_cost_continue))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.cancelDocumentCost() }) {
+                    Text(stringResource(R.string.cancel_button))
+                }
+            }
+        )
+    }
+
+    uiState.scannedOffer?.let { offer ->
+        AlertDialog(
+            onDismissRequest = { viewModel.declineScannedPages() },
+            title = { Text(stringResource(R.string.document_scan_title)) },
+            text = {
+                Text(stringResource(R.string.document_scan_body, offer.name, offer.pages))
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.acceptScannedPages() }) {
+                    Text(stringResource(R.string.document_scan_send))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.declineScannedPages() }) {
+                    Text(stringResource(R.string.cancel_button))
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             // The preset name lives in a thin strip UNDER the bar, not inside the title slot.
@@ -596,6 +651,45 @@ fun ChatScreen(
                             fileName = fileName,
                             onRemove = { viewModel.clearPendingFile() }
                         )
+                        // Said before the file is sent, not discovered afterwards: a .docx
+                        // whose charts and comments were silently dropped is a wrong answer
+                        // waiting to happen.
+                        if (uiState.pendingFileKind == "docx" || uiState.pendingFileKind == "xlsx" ||
+                            uiState.pendingFileKind == "pdf"
+                        ) {
+                            Text(
+                                text = stringResource(R.string.document_not_read),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
+                            )
+                        }
+                        documentWarningText(uiState.pendingFileWarning)?.let { warning ->
+                            Text(
+                                text = warning,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
+                            )
+                        }
+                    }
+                    uiState.pendingPages?.let { pages ->
+                        FileAttachmentChip(
+                            fileName = stringResource(
+                                R.string.document_pages_chip,
+                                pages.size,
+                                uiState.pendingPagesName.orEmpty()
+                            ),
+                            onRemove = { viewModel.clearPendingPages() }
+                        )
+                    }
+                    if (uiState.readingFile) {
+                        Text(
+                            text = stringResource(R.string.document_reading_file),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp)
+                        )
                     }
                     if (uiState.editMode) {
                         FileAttachmentChip(
@@ -676,14 +770,30 @@ fun ChatScreen(
                         text = inputText,
                         onTextChange = { inputText = it },
                         onSend = {
-                            if (inputText.isNotBlank() || uiState.pendingImageBytes != null || uiState.pendingFileText != null) {
+                            // Pages of a scan count as an attachment: with only pages waiting
+                            // and nothing typed, Send was dead and the chip just sat there.
+                            if (inputText.isNotBlank() || uiState.pendingImageBytes != null ||
+                                uiState.pendingFileText != null || uiState.pendingPages != null
+                            ) {
                                 viewModel.sendMessage(inputText)
                                 inputText = ""
                             }
                         },
                         onStop = { viewModel.cancelGeneration() },
                         isLoading = uiState.isLoading || uiState.isStreaming,
-                        onAttachFile = { filePickerLauncher.launch(arrayOf("text/plain", "text/html")) },
+                        onAttachFile = {
+                            filePickerLauncher.launch(
+                                arrayOf(
+                                    "application/pdf",
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    "text/plain",
+                                    "text/html",
+                                    "text/markdown",
+                                    "text/csv"
+                                )
+                            )
+                        },
                         onAttachPhoto = {
                             photoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -697,7 +807,8 @@ fun ChatScreen(
                         // frame of a video - any one of those earns the entry.
                         supportsVision = viewModel.currentProviderSupportsVision() ||
                             viewModel.editModel() != null || viewModel.canGenerateVideos(),
-                        hasAttachment = uiState.pendingImageBytes != null || uiState.pendingFileText != null,
+                        hasAttachment = uiState.pendingImageBytes != null ||
+                            uiState.pendingFileText != null || uiState.pendingPages != null,
                         imageFeatureAvailable = viewModel.imageFeatureAvailable(),
                         canGenerateImages = viewModel.canGenerateImages(),
                         imageMode = uiState.imageMode,
@@ -753,7 +864,11 @@ fun ChatScreen(
                 },
                 modifier = Modifier.padding(paddingValues)
             )
-        } else if (visibleMessages.isEmpty()) {
+        // ... and nothing attached either. A file read into an empty chat is the FIRST thing
+        // that happens in a document conversation, and the empty-state panel replaces the whole
+        // list - so without this the notes card is invisible until the user has typed something,
+        // which is exactly when they most want to see that the file was read. (Device, session 4.)
+        } else if (visibleMessages.isEmpty() && uiState.documents.isEmpty()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -790,6 +905,10 @@ fun ChatScreen(
                     val generatedImage = message.imagePath?.let { path ->
                         remember(path) { viewModel.readImage(path) }
                     }
+                    // The card is declared AFTER the bubble inside this item on purpose:
+                    // the list is reverseLayout, so later content in one item renders below -
+                    // which here means "just after the message it arrived with".
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     MessageBubble(
                         message = message,
                         isUser = message.role == "user",
@@ -835,6 +954,34 @@ fun ChatScreen(
                             }
                         }
                     )
+                    uiState.documents
+                        .filter { it.attachedMessageId == message.id }
+                        .forEach { document ->
+                            DocumentNotesCard(
+                                document = document,
+                                reading = uiState.reading,
+                                onContinue = { viewModel.startReading(document.id) },
+                                onStop = { viewModel.stopReading() },
+                                onRemove = { viewModel.forgetDocument(document.id) }
+                            )
+                        }
+                    }
+                }
+
+                // A file attached before anything was said belongs at the top of the
+                // conversation; with reverseLayout the LAST item declared renders there.
+                item {
+                    uiState.documents
+                        .filter { it.attachedMessageId == null }
+                        .forEach { document ->
+                            DocumentNotesCard(
+                                document = document,
+                                reading = uiState.reading,
+                                onContinue = { viewModel.startReading(document.id) },
+                                onStop = { viewModel.stopReading() },
+                                onRemove = { viewModel.forgetDocument(document.id) }
+                            )
+                        }
                 }
             }
 

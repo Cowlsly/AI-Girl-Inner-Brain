@@ -36,6 +36,19 @@ object ErrorMapper {
     }
 
     /**
+     * The HTTP status behind a failed request, where there was one.
+     *
+     * classifyModelFailure answers a different question (is a different MODEL worth trying) and
+     * folds 402 in with 429. The notes pass needs the rate limit specifically: a 429 is worth
+     * waiting out, an empty balance is not.
+     */
+    fun httpCode(throwable: Throwable): Int? = when (throwable) {
+        is HttpException -> throwable.code()
+        is ApiHttpException -> throwable.code
+        else -> null
+    }
+
+    /**
      * What, if anything, moving this conversation onto a different model would achieve.
      *
      * DEAD  - the model itself is gone or barred (403/404, or a 400 naming it). Worth both

@@ -152,10 +152,10 @@
     <!-- File input -->
     <string name="attach_file">Attach text file</string>
     <string name="remove_file">Remove file</string>
-    <string name="file_too_large">File is too large (max 50 KB of text). Choose a smaller file.</string>
+    <string name="file_too_large">That file is too large. Maskan reads files up to 25 MB.</string>
     <string name="file_read_error">Could not read this file.</string>
     <string name="attach_choose_image">Image</string>
-    <string name="attach_choose_file">Text file (.txt, .html)</string>
+    <string name="attach_choose_file">File (.pdf, .docx, .xlsx, .txt)</string>
     <string name="attach_type_title">Attach</string>
 
     <!-- Markdown -->
@@ -391,4 +391,35 @@
     <string name="camera_prompt_translate">Translate all the text in this photo into English. Keep the lines in the same order.</string>
     <string name="camera_prompt_read_aloud">Read out the text in this photo, then say in one line what it is.</string>
     <string name="camera_prompt_what_is_this">What is in this photo? Explain briefly in simple words.</string>
+    <string name="document_legacy_format">Maskan cannot read .doc, .xls or .ppt files. Save it as .docx, .xlsx or PDF and attach it again.</string>
+    <string name="document_macro_format">Maskan cannot read files that carry macros (.docm, .xlsm). Save it as .docx or .xlsx and attach it again.</string>
+    <string name="document_encrypted">This PDF is password-protected. Remove the password and attach it again.</string>
+    <string name="document_cert_encrypted">This PDF is encrypted with a certificate. Maskan cannot open it.</string>
+    <string name="document_empty">There is no text in that file.</string>
+    <string name="document_scan_no_vision">This PDF is a scan, and the current model cannot look at pictures. Choose a model that can see, then attach it again.</string>
+    <string name="document_scan_title">No text in this PDF</string>
+    <string name="document_scan_body">\'%1$s\' looks like a scan — %2$d pages with no text to read. Send the first 3 pages as pictures instead?</string>
+    <string name="document_scan_send">Send the pages</string>
+    <string name="document_pages_question">Read these pages and tell me what they say.</string>
+    <string name="document_page_label">Page %1$d of %2$s</string>
+    <string name="document_cost_title">Read this file?</string>
+    <string name="document_cost_body">\'%1$s\' is about %2$d tokens long, and reading it takes about %3$d requests. You can stop at any time and ask about the part that has been read.</string>
+    <string name="document_cost_continue">Read it</string>
+    <string name="document_reading_file">Reading the file…</string>
+    <string name="document_notes_title">Document notes</string>
+    <string name="document_progress">%1$d of %2$d parts read</string>
+    <string name="document_read_done">Read in full</string>
+    <string name="document_continue">Continue reading</string>
+    <string name="document_stop">Stop</string>
+    <string name="document_remove">Remove</string>
+    <string name="document_waiting">The provider is busy — trying again in %1$d s</string>
+    <string name="document_not_read">Text and cell values only. Pictures, layout, charts, comments and the formula behind a value are not read.</string>
+    <string name="document_warn_arabic">The Arabic in this file was stored as letter shapes; its word order may be jumbled.</string>
+    <string name="document_warn_pages">Read %1$d of %2$d pages.</string>
+    <string name="document_warn_rows">Read %1$d of %2$d rows.</string>
+    <string name="document_pages_chip">%1$d pages of %2$s</string>
+    <string name="document_meta_pages">%1$d pages</string>
+    <string name="document_meta_tokens">~%1$d tokens</string>
+    <string name="document_show_notes">Show notes</string>
+    <string name="document_hide_notes">Hide notes</string>
 </resources>

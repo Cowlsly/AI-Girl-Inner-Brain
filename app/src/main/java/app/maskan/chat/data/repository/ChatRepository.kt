@@ -4,6 +4,8 @@ import android.util.Base64
 import app.maskan.chat.BuildConfig
 import app.maskan.chat.data.local.ConversationDao
 import app.maskan.chat.data.local.ConversationEntity
+import app.maskan.chat.data.local.DocumentDao
+import app.maskan.chat.data.local.DocumentEntity
 import app.maskan.chat.data.local.FolderDao
 import app.maskan.chat.data.local.FolderEntity
 import app.maskan.chat.data.local.MessageDao
@@ -16,12 +18,16 @@ import app.maskan.chat.data.remote.MessageContent
 import app.maskan.chat.data.remote.VideoBackend
 import app.maskan.chat.data.remote.VideoJobClient
 import app.maskan.chat.data.remote.providers.ProviderRegistry
+import app.maskan.chat.util.DocumentChunks
+import app.maskan.chat.util.DocumentExtract
+import app.maskan.chat.util.ErrorMapper
 import app.maskan.chat.util.ImageStore
 import app.maskan.chat.util.TokenEstimate
 import app.maskan.chat.video.VideoJobs
 import app.maskan.chat.video.VideoOptions
 import app.maskan.chat.video.VideoRenderWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -33,6 +39,7 @@ class ChatRepository(
     private val conversationDao: ConversationDao,
     private val messageDao: MessageDao,
     private val folderDao: FolderDao,
+    private val documentDao: DocumentDao,
     private val keyRepository: KeyRepository,
     private val localeRepository: LocaleRepository,
     private val preferenceRepository: PreferenceRepository,
@@ -187,6 +194,268 @@ class ChatRepository(
             imageMimeType = imageMimeType
         )
         return messageDao.insertMessage(message)
+    }
+
+    // ── Documents ──────────────────────────────────────────────────────
+
+    fun documentsFor(conversationId: Long): Flow<List<DocumentEntity>> =
+        documentDao.getForConversation(conversationId)
+
+    /**
+     * Read once, for the screen.
+     *
+     * Not the Flow: Room's invalidation is unreliable under SQLCipher (the message list is
+     * driven the same way for the same reason), and the notes card must show 12 of 30 the
+     * moment the twelfth chunk lands, not whenever Room notices.
+     */
+    suspend fun documentsOnce(conversationId: Long): List<DocumentEntity> =
+        documentDao.getForConversationOnce(conversationId)
+
+    suspend fun getDocument(id: Long): DocumentEntity? = documentDao.getById(id)
+
+    suspend fun deleteDocument(id: Long) = documentDao.delete(id)
+
+    suspend fun setDocumentPages(id: Long, messageIds: List<Long>) {
+        documentDao.updatePageImageIds(id, messageIds.joinToString(",").ifBlank { null })
+    }
+
+    suspend fun setDocumentMessage(id: Long, messageId: Long?) {
+        documentDao.updateAttachedMessage(id, messageId)
+    }
+
+    /**
+     * The chunk size this conversation's provider can afford.
+     *
+     * A 4k-context model on someone's own machine has room for a 1,000-token excerpt and the
+     * question and its own answer; 1,500 would have the server truncate the history silently,
+     * which reads as a model that forgot the conversation.
+     */
+    suspend fun chunkTokensFor(conversationId: Long): Int {
+        val conversation = conversationDao.getConversationById(conversationId)
+        val provider = conversation?.let { ProviderRegistry.getProvider(it.providerId) }
+        return if (provider?.isLocal == true) {
+            DocumentChunks.CHUNK_TOKENS_LOCAL
+        } else {
+            DocumentChunks.CHUNK_TOKENS
+        }
+    }
+
+    /**
+     * Store an extracted file against a conversation.
+     *
+     * chunkCount is 0 for a document small enough to be pasted into the message whole - that is
+     * the flag everything downstream reads as "this one needs no notes pass and must not be
+     * added to the request a second time, because its text is already in the history".
+     */
+    suspend fun saveDocument(
+        conversationId: Long,
+        doc: DocumentExtract.Doc,
+        attachedMessageId: Long? = null
+    ): Long {
+        val chunkTokens = chunkTokensFor(conversationId)
+        val tokens = TokenEstimate.of(doc.text)
+        val chunkCount = if (tokens > DocumentChunks.INLINE_CEILING_TOKENS) {
+            DocumentChunks.chunk(doc.text, chunkTokens).size
+        } else {
+            0
+        }
+        return documentDao.insert(
+            DocumentEntity(
+                conversationId = conversationId,
+                attachedMessageId = attachedMessageId,
+                name = doc.name,
+                kind = doc.kind,
+                pages = doc.pages,
+                tokens = tokens,
+                text = doc.text,
+                chunkCount = chunkCount,
+                chunkTokens = chunkTokens,
+                warning = doc.warning
+            )
+        )
+    }
+
+    sealed class NotesEvent {
+        data class Progress(val done: Int, val total: Int) : NotesEvent()
+
+        /** Rate limited; waiting [seconds] before trying the same chunk again. */
+        data class Waiting(val seconds: Int) : NotesEvent()
+
+        data class Stopped(val error: Throwable) : NotesEvent()
+        data object Finished : NotesEvent()
+    }
+
+    /**
+     * Summarise the document's remaining chunks, one request at a time.
+     *
+     * Sequential rather than parallel on purpose. A free-tier key answers a burst of thirty
+     * requests with 429s, and the pass that was supposed to make a long file usable instead
+     * fails halfway; one at a time with a backoff finishes, slowly, on every key there is.
+     *
+     * Every chunk is written with the count that describes it in one statement, so the pass
+     * resumes exactly where it stopped - a process killed mid-pass loses the request in flight
+     * and nothing else. Nothing here starts on its own: the user taps Continue, because these
+     * are their requests being spent.
+     */
+    fun readDocument(documentId: Long): Flow<NotesEvent> = flow {
+        while (true) {
+            val document = documentDao.getById(documentId) ?: return@flow
+            if (document.chunkCount <= 0 || document.notesDone >= document.chunkCount) {
+                emit(NotesEvent.Finished)
+                return@flow
+            }
+            val conversation = conversationDao.getConversationById(document.conversationId)
+                ?: return@flow
+
+            val chunks = DocumentChunks.chunk(document.text, document.chunkTokens)
+            val index = document.notesDone
+            val chunk = chunks.getOrNull(index)
+            if (chunk == null) {
+                // The stored count and the re-cut text disagree, which should not happen and
+                // must not spin: call the pass done rather than ask for chunk 29 of 28 forever.
+                documentDao.updateNotes(documentId, document.notes, document.chunkCount)
+                emit(NotesEvent.Finished)
+                return@flow
+            }
+
+            var attempt = 0
+            while (true) {
+                try {
+                    val note = summariseChunk(conversation, chunk, index + 1, chunks.size)
+                    val merged = listOfNotNull(
+                        document.notes?.takeIf { it.isNotBlank() },
+                        note
+                    ).joinToString("\n\n")
+                    documentDao.updateNotes(documentId, merged, index + 1)
+                    emit(NotesEvent.Progress(index + 1, chunks.size))
+                    break
+                } catch (e: Exception) {
+                    val code = ErrorMapper.httpCode(e)
+                    val worthWaiting = (code == 429 || code == 503) && attempt < NOTES_MAX_RETRIES
+                    if (!worthWaiting) {
+                        emit(NotesEvent.Stopped(e))
+                        return@flow
+                    }
+                    val seconds = NOTES_BACKOFF_SECONDS shl attempt
+                    emit(NotesEvent.Waiting(seconds))
+                    delay(seconds * 1000L)
+                    attempt++
+                }
+            }
+        }
+    }
+
+    private suspend fun summariseChunk(
+        conversation: ConversationEntity,
+        chunk: String,
+        number: Int,
+        total: Int
+    ): String {
+        val providerId = conversation.providerId
+        val provider = ProviderRegistry.getProvider(providerId)
+            ?: throw Exception("Unknown provider: " + providerId)
+
+        val apiKey = keyRepository.getApiKey(providerId) ?: ""
+        if (apiKey.isBlank() && !provider.supportsCustomBaseUrl) {
+            throw Exception("API key not set. Please add your API key in Settings.")
+        }
+        val model = conversation.modelId
+            ?: keyRepository.getSelectedModel(providerId)
+            ?: provider.defaultModel
+
+        // No history and no folder instructions: this is an indexing job, not a conversation,
+        // and sending the chat's context with all thirty of these would multiply the cost of
+        // reading a file by the length of the chat it was dropped into.
+        val instruction = Message(
+            role = "system",
+            text = "You are indexing one part of a longer document so that it can be found " +
+                "again later. Summarise the excerpt in AT MOST five short lines. Keep names, " +
+                "dates, numbers, amounts and defined terms exactly as they are written. Write " +
+                "in the same language as the excerpt. Reply with the lines alone - no " +
+                "preamble, no heading, no commentary."
+        )
+        val summary = provider.sendMessage(
+            apiKey,
+            model,
+            listOf(instruction, Message(role = "user", text = chunk)),
+            keyRepository.getBaseUrl(providerId)
+        ).trim()
+
+        if (summary.isBlank()) throw Exception("Empty response from " + provider.displayName)
+        return "[" + number + "/" + total + "] " + summary
+    }
+
+    /**
+     * What this question needs from the conversation's documents, or null.
+     *
+     * Only documents with chunks: one small enough to have been pasted into the message is
+     * already in the history, and repeating it here would send it twice.
+     */
+    private fun documentBlock(
+        docs: List<DocumentEntity>,
+        question: String,
+        local: Boolean
+    ): String? {
+        val readable = docs.filter { it.chunkCount > 0 && it.text.isNotBlank() }
+        if (readable.isEmpty()) return null
+
+        val budget = if (local) MAX_DOCUMENT_TOKENS_LOCAL else MAX_DOCUMENT_TOKENS
+        val perDocument = (budget / readable.size).coerceAtLeast(400)
+        val blocks = readable.map { oneDocumentBlock(it, question, perDocument) }
+        return blocks.joinToString("\n\n").takeIf { it.isNotBlank() }
+    }
+
+    private fun oneDocumentBlock(
+        document: DocumentEntity,
+        question: String,
+        budget: Int
+    ): String {
+        val header = StringBuilder()
+        header.append("### From the file \"").append(document.name).append("\"")
+        if (document.pages > 0) header.append(" (").append(document.pages).append(" pages)")
+        header.append("\n")
+        header.append(
+            "The user attached this file. Answer from it when the question is about it, and " +
+                "say which part an answer came from."
+        )
+        if (document.partial) {
+            // The honest sentence, and the reason the Continue button is worth tapping: a model
+            // asked about the half of a contract nobody has read yet must say so, not invent it.
+            header.append(
+                "\nOnly " + document.notesDone + " of " + document.chunkCount +
+                    " parts have been read so far. If the answer is not in what follows, say " +
+                    "that this part of the file has not been read yet - do not guess."
+            )
+        }
+        if (document.warning == DocumentExtract.WARN_ARABIC) {
+            header.append(
+                "\nThe Arabic in this file was stored as letter shapes and its word order may " +
+                    "be reversed. If a passage reads as nonsense, say so instead of guessing."
+            )
+        }
+
+        // Notes first and clamped least: they are what the model has actually been told about
+        // the parts the excerpts do not cover.
+        val notesBudget = (budget * 0.45).toInt().coerceAtLeast(200)
+        val notes = document.notes?.takeIf { it.isNotBlank() }
+            ?.let { TokenEstimate.clamp(it, notesBudget) }
+
+        val chunks = DocumentChunks.chunk(document.text, document.chunkTokens)
+        val picked = DocumentChunks.rank(question, chunks)
+        val excerptBudget = (budget - TokenEstimate.of(notes) - TokenEstimate.of(header.toString()))
+            .coerceAtLeast(200)
+        val perExcerpt = (excerptBudget / picked.size.coerceAtLeast(1)).coerceAtLeast(150)
+        val excerpts = picked.mapNotNull { index ->
+            chunks.getOrNull(index)?.let { TokenEstimate.clamp(it, perExcerpt) }
+        }
+
+        val out = StringBuilder(header)
+        if (notes != null) out.append("\n\n#### Summary of the whole file\n").append(notes)
+        if (excerpts.isNotEmpty()) {
+            out.append("\n\n#### The parts closest to this question\n")
+            out.append(excerpts.joinToString("\n\n---\n\n"))
+        }
+        return out.toString()
     }
 
     // ── API Call ───────────────────────────────────────────────────────
@@ -984,7 +1253,8 @@ class ChatRepository(
         model: String
     ): List<Message> {
         val entities = messageDao.getMessagesForConversationOnce(conversation.id)
-        val carried = photosToCarry(conversation, model, entities)
+        val documents = documentDao.getForConversationOnce(conversation.id)
+        val carried = photosToCarry(conversation, model, entities, documents)
         val messages = entities.map { entity ->
             val base64 = entity.imageBase64
             if (entity.id in carried && base64 != null) {
@@ -1006,10 +1276,17 @@ class ChatRepository(
         val recentMessages = nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
 
         val project = projectText(conversation)
-        // A chat outside a folder, or in a folder with both files empty, must send EXACTLY what
-        // 2.5.0 sent. Not nearly - exactly: this is the line that keeps the new feature from
-        // quietly changing every existing conversation in the app.
-        if (project == null) {
+
+        // The question the document evidence is chosen for is the turn being sent: the user row
+        // is written before the request is built, so the last user message IS the question.
+        val question = entities.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val isLocal = ProviderRegistry.getProvider(conversation.providerId)?.isLocal == true
+        val documentText = documentBlock(documents, question, isLocal)
+
+        // A chat outside a folder, in a folder with both files empty, and with no document must
+        // send EXACTLY what 2.5.0 sent. Not nearly - exactly: this is the line that keeps the
+        // new features from quietly changing every existing conversation in the app.
+        if (project == null && documentText == null) {
             val plain = systemMessages + recentMessages
             logContext(conversation, plain, "2.5.0-shape")
             return plain
@@ -1021,10 +1298,16 @@ class ChatRepository(
         // anyway, and an OpenAI-shaped provider would otherwise receive two, which is the 2.5
         // trap that rejected calls outright.
         val preset = systemMessages.joinToString("\n") { it.content.textContent() }.trim()
-        val assembled = assembleSystemText(preset, project)
+        // The document block is appended AFTER the project text and outside its ceiling: the
+        // folder's instructions and the file the user just attached are two different budgets,
+        // and a long style guide must not be able to squeeze out the contract being asked about.
+        val assembled = listOfNotNull(
+            if (project != null) assembleSystemText(preset, project) else preset.ifBlank { null },
+            documentText
+        ).joinToString("\n\n")
 
         val outgoing = listOf(Message(role = "system", text = assembled)) + recentMessages
-        logContext(conversation, outgoing, "assembled")
+        logContext(conversation, outgoing, if (documentText != null) "document" else "assembled")
         return outgoing
     }
 
@@ -1039,7 +1322,8 @@ class ChatRepository(
     private fun photosToCarry(
         conversation: ConversationEntity,
         model: String,
-        entities: List<MessageEntity>
+        entities: List<MessageEntity>,
+        documents: List<DocumentEntity>
     ): Set<Long> {
         val blind = modelKnownBlind(conversation, model)
         if (BuildConfig.DEBUG) {
@@ -1051,6 +1335,19 @@ class ChatRepository(
             )
         }
         if (blind) return emptySet()
+
+        // A scanned PDF went as three pictures, and the ordinary rule below would keep the last
+        // two of them - dropping page 1, which is the page a letter or an invoice says
+        // everything on. So while the newest picture in this chat is one of that document's
+        // pages, the whole set travels together and REPLACES the two-photo carry rather than
+        // adding to it; the moment the user attaches a newer photo, the ordinary rule resumes.
+        val pageIds = documents.lastOrNull { it.isPages }?.pageIds().orEmpty()
+        if (pageIds.isNotEmpty()) {
+            val newestPicture = entities
+                .lastOrNull { it.role == "user" && it.imageBase64 != null }?.id
+            if (newestPicture != null && newestPicture in pageIds) return pageIds.toSet()
+        }
+
         return entities
             .filter { it.role != "system" }
             .takeLast(MAX_CONTEXT_MESSAGES)
@@ -1129,5 +1426,22 @@ class ChatRepository(
          * every following turn, so this is a cost ceiling as much as a context choice.
          */
         const val MAX_CARRIED_PHOTOS = 2
+
+        /**
+         * The ceiling on the document half of the system message - notes plus excerpts - and a
+         * budget of its own rather than a share of MAX_SYSTEM_TOKENS. A folder with a long
+         * instructions file and a long contract attached are two separate things the user
+         * wants; neither should be able to erase the other.
+         */
+        const val MAX_DOCUMENT_TOKENS = 3000
+
+        /** The same, for a 4k-context model on the user's own machine. */
+        const val MAX_DOCUMENT_TOKENS_LOCAL = 2000
+
+        /** How many times one chunk is retried after a 429 before the pass stops and says so. */
+        const val NOTES_MAX_RETRIES = 4
+
+        /** First wait after a rate limit; it doubles per attempt (2, 4, 8, 16 seconds). */
+        const val NOTES_BACKOFF_SECONDS = 2
     }
 }

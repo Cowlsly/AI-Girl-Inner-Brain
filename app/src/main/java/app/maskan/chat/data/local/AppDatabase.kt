@@ -9,14 +9,20 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
-    entities = [ConversationEntity::class, MessageEntity::class, FolderEntity::class],
-    version = 8,
+    entities = [
+        ConversationEntity::class,
+        MessageEntity::class,
+        FolderEntity::class,
+        DocumentEntity::class
+    ],
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
     abstract fun messageDao(): MessageDao
     abstract fun folderDao(): FolderDao
+    abstract fun documentDao(): DocumentDao
 
     companion object {
         @Volatile
@@ -64,6 +70,46 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * 2.6: a conversation can hold documents. One new table, no existing column touched, so
+         * an upgrade over a phone full of real chats adds a table and changes nothing else.
+         *
+         * The text of a file lives here rather than in a message row because a message row is
+         * re-sent on every following request, and a 30-page contract pasted into the history
+         * would be paid for again on every question about it.
+         *
+         * Hand-written for the same reason as 7->8: the destructive fallback would drop every
+         * conversation on the phone, and this database is the only copy there is.
+         */
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS documents (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "conversationId INTEGER NOT NULL, " +
+                        "attachedMessageId INTEGER, " +
+                        "name TEXT NOT NULL, " +
+                        "kind TEXT NOT NULL, " +
+                        "pages INTEGER NOT NULL DEFAULT 0, " +
+                        "tokens INTEGER NOT NULL DEFAULT 0, " +
+                        "text TEXT NOT NULL, " +
+                        "notes TEXT, " +
+                        "notesDone INTEGER NOT NULL DEFAULT 0, " +
+                        "chunkCount INTEGER NOT NULL DEFAULT 0, " +
+                        "chunkTokens INTEGER NOT NULL DEFAULT 0, " +
+                        "pageImageIds TEXT, " +
+                        "warning TEXT, " +
+                        "createdAt INTEGER NOT NULL, " +
+                        "FOREIGN KEY(conversationId) REFERENCES conversations(id) " +
+                        "ON UPDATE NO ACTION ON DELETE CASCADE)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_documents_conversationId " +
+                        "ON documents (conversationId)"
+                )
+            }
+        }
+
         fun getInstance(context: Context, passphrase: ByteArray): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val factory = SupportOpenHelperFactory(passphrase)
@@ -74,7 +120,8 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .openHelperFactory(factory)
                     .addMigrations(
-                        MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8
+                        MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                        MIGRATION_7_8, MIGRATION_8_9
                     )
                     .build()
                 INSTANCE = instance

@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import app.maskan.chat.data.local.DocumentEntity
 import app.maskan.chat.data.local.MessageEntity
 import app.maskan.chat.data.local.Presets
 import app.maskan.chat.data.local.SystemPromptPreset
@@ -26,7 +27,11 @@ import app.maskan.chat.util.ErrorMapper
 import app.maskan.chat.util.ImageStore
 import app.maskan.chat.util.ProjectMemory
 import app.maskan.chat.util.CameraCapture
+import app.maskan.chat.util.DocumentChunks
+import app.maskan.chat.util.DocumentExtract
 import app.maskan.chat.util.ImageUtils
+import app.maskan.chat.util.PdfPageImages
+import app.maskan.chat.util.TokenEstimate
 import app.maskan.chat.video.VideoJobs
 import app.maskan.chat.video.VideoOptions
 import app.maskan.chat.video.VideoProgress
@@ -38,6 +43,33 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+
+/** A file that has been read, waiting for the user to accept what reading it will cost. */
+data class DocumentCost(
+    val doc: DocumentExtract.Doc,
+    val tokens: Int,
+    val requests: Int
+)
+
+/** A PDF with no text in it, waiting for a yes to send its first pages as pictures. */
+data class ScannedOffer(
+    val uri: Uri,
+    val name: String,
+    val pages: Int
+)
+
+/**
+ * The notes pass, while it is running. Absent when nothing is running - which includes a
+ * document that is half read and waiting for the user to tap Continue, because a half-read
+ * document is a fact about the DOCUMENT and lives on its row, not here.
+ */
+data class Reading(
+    val documentId: Long,
+    val done: Int,
+    val total: Int,
+    /** Non-zero while backing off from a rate limit, so the card can say why nothing moves. */
+    val waitingSeconds: Int = 0
+)
 
 data class ChatUiState(
     val messages: List<MessageEntity> = emptyList(),
@@ -52,6 +84,20 @@ data class ChatUiState(
     val pendingImageMimeType: String? = null,
     val pendingFileText: String? = null,
     val pendingFileName: String? = null,
+    /** DocumentExtract.KIND_* of the pending file, for the "what is not read" line. */
+    val pendingFileKind: String? = null,
+    /** DocumentExtract.WARN_* of the pending file. A small file has no card to carry it. */
+    val pendingFileWarning: String? = null,
+    /** Files attached to this conversation, and how much of each has been read. */
+    val documents: List<DocumentEntity> = emptyList(),
+    /** True while a picked file is being extracted - a 200-page PDF takes a moment. */
+    val readingFile: Boolean = false,
+    val documentCost: DocumentCost? = null,
+    val scannedOffer: ScannedOffer? = null,
+    /** Rendered pages of a scan, waiting to go with the next message. */
+    val pendingPages: List<ByteArray>? = null,
+    val pendingPagesName: String? = null,
+    val reading: Reading? = null,
     /**
      * The model this chat could be moved onto to recover from the current error. Non-null only
      * when the send failed BECAUSE the conversation is pinned to a model that no longer works
@@ -129,6 +175,7 @@ class ChatViewModel(
     private var messageCollectionJob: kotlinx.coroutines.Job? = null
     private var streamingJob: Job? = null
     private var videoWatchJob: Job? = null
+    private var readingJob: Job? = null
 
     /**
      * Work ids whose finish has already been folded into the message list. WorkManager keeps
@@ -192,6 +239,8 @@ class ChatViewModel(
                 videoSize = VideoOptions.validSize(providerId, preferenceRepository.getVideoSize()),
                 videoSeconds = VideoOptions.validSeconds(providerId, preferenceRepository.getVideoSeconds())
             )
+
+            refreshDocuments()
 
             chatRepository.getMessagesForConversation(conversationId).collect { messages ->
                 _uiState.value = _uiState.value.copy(
@@ -310,6 +359,7 @@ class ChatViewModel(
     fun sweepCameraCache() {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { CameraCapture.sweep(getApplication()) }
+            runCatching { PdfPageImages.sweep(getApplication()) }
         }
     }
 
@@ -321,49 +371,202 @@ class ChatViewModel(
         )
     }
 
+    /**
+     * A picked file, whatever kind it is.
+     *
+     * Three ways out. Small enough to fit a request - the 2.5 path, pasted into the message.
+     * Too big for that - the cost prompt, and then a table row the questions are answered from.
+     * A PDF with no text at all - the offer to send its pages as pictures. Nothing is sent to a
+     * provider anywhere in here.
+     */
     fun attachFile(uri: Uri) {
         viewModelScope.launch {
-            try {
-                val context: Context = getApplication()
-                val fileName = resolveFileName(context, uri)
-                val mimeType = context.contentResolver.getType(uri) ?: "text/plain"
+            val context: Context = getApplication()
+            val fileName = resolveFileName(context, uri)
+            val mimeType = context.contentResolver.getType(uri)
 
-                val raw = context.contentResolver.openInputStream(uri)?.use { stream ->
-                    stream.bufferedReader().readText()
-                } ?: throw Exception("Cannot read file")
+            _uiState.value = _uiState.value.copy(readingFile = true, error = null)
+            val outcome = withContext(Dispatchers.IO) {
+                DocumentExtract.extract(context, uri, fileName, mimeType)
+            }
+            _uiState.value = _uiState.value.copy(readingFile = false)
 
-                val text = if (mimeType == "text/html") {
-                    raw.replace(Regex("<[^>]*>"), " ")
-                        .replace(Regex("&nbsp;"), " ")
-                        .replace(Regex("&amp;"), "&")
-                        .replace(Regex("&lt;"), "<")
-                        .replace(Regex("&gt;"), ">")
-                        .replace(Regex("&quot;"), "\"")
-                        .replace(Regex("&#39;"), "'")
-                        .replace(Regex("\\s+"), " ")
-                        .trim()
-                } else {
-                    raw
-                }
-
-                if (text.toByteArray().size > MAX_FILE_TEXT_BYTES) {
-                    _uiState.value = _uiState.value.copy(
-                        error = context.getString(app.maskan.chat.R.string.file_too_large)
-                    )
-                    return@launch
-                }
-
-                _uiState.value = _uiState.value.copy(
-                    pendingFileText = text,
-                    pendingFileName = fileName
+            when (outcome) {
+                is DocumentExtract.Outcome.Refused -> _uiState.value = _uiState.value.copy(
+                    error = context.getString(refusalStringFor(outcome.reason))
                 )
-            } catch (e: Exception) {
-                val context: Context = getApplication()
-                _uiState.value = _uiState.value.copy(
-                    error = context.getString(app.maskan.chat.R.string.file_read_error)
+
+                is DocumentExtract.Outcome.NoText -> {
+                    // The three-state rule, not currentProviderSupportsVision(): on a provider
+                    // that publishes no capability data the two-state answer is "no" even for a
+                    // model that plainly sees, and the offer would be missing exactly where it
+                    // is most useful. Session 3 learned this the expensive way.
+                    if (photoQuestionsAvailable()) {
+                        _uiState.value = _uiState.value.copy(
+                            scannedOffer = ScannedOffer(uri, fileName, outcome.pages)
+                        )
+                    } else {
+                        _uiState.value = _uiState.value.copy(
+                            error = context.getString(R.string.document_scan_no_vision)
+                        )
+                    }
+                }
+
+                is DocumentExtract.Outcome.Ok -> {
+                    val doc = outcome.doc
+                    val tokens = TokenEstimate.of(doc.text)
+                    if (tokens <= DocumentChunks.INLINE_CEILING_TOKENS) {
+                        _uiState.value = _uiState.value.copy(
+                            pendingFileText = doc.text,
+                            pendingFileName = doc.name,
+                            pendingFileKind = doc.kind,
+                            pendingFileWarning = doc.warning
+                        )
+                    } else {
+                        val chunkTokens = chatRepository.chunkTokensFor(currentConversationId)
+                        val requests = DocumentChunks.chunk(doc.text, chunkTokens).size
+                        _uiState.value = _uiState.value.copy(
+                            documentCost = DocumentCost(doc, tokens, requests)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refusalStringFor(reason: String): Int = when (reason) {
+        DocumentExtract.REFUSED_TOO_LARGE -> R.string.file_too_large
+        DocumentExtract.REFUSED_LEGACY -> R.string.document_legacy_format
+        DocumentExtract.REFUSED_MACRO -> R.string.document_macro_format
+        DocumentExtract.REFUSED_ENCRYPTED -> R.string.document_encrypted
+        DocumentExtract.REFUSED_CERT -> R.string.document_cert_encrypted
+        DocumentExtract.REFUSED_EMPTY -> R.string.document_empty
+        else -> R.string.file_read_error
+    }
+
+    /** The user accepted the cost. The row is written now; the reading starts now. */
+    fun confirmDocumentCost() {
+        val cost = _uiState.value.documentCost ?: return
+        _uiState.value = _uiState.value.copy(documentCost = null)
+        viewModelScope.launch {
+            // The card sits after whatever the conversation ended with, so it stays where it
+            // appeared instead of sliding to the bottom as the chat grows.
+            val after = _uiState.value.messages.lastOrNull()?.id
+            val id = chatRepository.saveDocument(currentConversationId, cost.doc, after)
+            refreshDocuments()
+            startReading(id)
+        }
+    }
+
+    fun cancelDocumentCost() {
+        _uiState.value = _uiState.value.copy(documentCost = null)
+    }
+
+    /**
+     * Read the next chunks. Never called on its own - the cost prompt's Continue starts it, and
+     * the card's Continue resumes it. A pass that stopped, for any reason, stays stopped until
+     * the person whose requests these are asks for more.
+     */
+    fun startReading(documentId: Long) {
+        // Already running for this document: the card's Continue is a no-op, not a second pass.
+        if (_uiState.value.reading?.documentId == documentId) return
+        readingJob?.cancel()
+
+        // Set BEFORE the first request, not when the first chunk lands: the gap is one whole
+        // request long, and for that gap the card offered Continue on a pass already running.
+        val document = _uiState.value.documents.firstOrNull { it.id == documentId }
+        _uiState.value = _uiState.value.copy(
+            reading = Reading(
+                documentId = documentId,
+                done = document?.notesDone ?: 0,
+                total = document?.chunkCount ?: 0
+            )
+        )
+
+        readingJob = viewModelScope.launch {
+            chatRepository.readDocument(documentId).collect { event ->
+                when (event) {
+                    is ChatRepository.NotesEvent.Progress -> {
+                        _uiState.value = _uiState.value.copy(
+                            reading = Reading(documentId, event.done, event.total)
+                        )
+                        refreshDocuments()
+                    }
+                    is ChatRepository.NotesEvent.Waiting -> {
+                        val current = _uiState.value.reading
+                        _uiState.value = _uiState.value.copy(
+                            reading = current?.copy(waitingSeconds = event.seconds)
+                                ?: Reading(documentId, 0, 0, event.seconds)
+                        )
+                    }
+                    is ChatRepository.NotesEvent.Stopped -> {
+                        _uiState.value = _uiState.value.copy(
+                            reading = null,
+                            error = ErrorMapper.mapToUserMessage(getApplication(), event.error)
+                        )
+                        refreshDocuments()
+                    }
+                    ChatRepository.NotesEvent.Finished -> {
+                        _uiState.value = _uiState.value.copy(reading = null)
+                        refreshDocuments()
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopReading() {
+        readingJob?.cancel()
+        _uiState.value = _uiState.value.copy(reading = null)
+        viewModelScope.launch { refreshDocuments() }
+    }
+
+    fun forgetDocument(documentId: Long) {
+        viewModelScope.launch {
+            if (_uiState.value.reading?.documentId == documentId) stopReading()
+            chatRepository.deleteDocument(documentId)
+            refreshDocuments()
+        }
+    }
+
+    private suspend fun refreshDocuments() {
+        val conversationId = currentConversationId
+        if (conversationId < 0) return
+        val documents = chatRepository.documentsOnce(conversationId)
+        if (currentConversationId == conversationId) {
+            _uiState.value = _uiState.value.copy(documents = documents)
+        }
+    }
+
+    /** Render the first pages of a scan and hold them for the next message. */
+    fun acceptScannedPages() {
+        val offer = _uiState.value.scannedOffer ?: return
+        _uiState.value = _uiState.value.copy(scannedOffer = null, readingFile = true)
+        viewModelScope.launch {
+            val pages = withContext(Dispatchers.IO) {
+                PdfPageImages.render(getApplication(), offer.uri)
+            }
+            _uiState.value = if (pages.isEmpty()) {
+                _uiState.value.copy(
+                    readingFile = false,
+                    error = getApplication<Application>().getString(R.string.file_read_error)
+                )
+            } else {
+                _uiState.value.copy(
+                    readingFile = false,
+                    pendingPages = pages,
+                    pendingPagesName = offer.name
                 )
             }
         }
+    }
+
+    fun declineScannedPages() {
+        _uiState.value = _uiState.value.copy(scannedOffer = null)
+    }
+
+    fun clearPendingPages() {
+        _uiState.value = _uiState.value.copy(pendingPages = null, pendingPagesName = null)
     }
 
     private fun resolveFileName(context: Context, uri: Uri): String {
@@ -379,7 +582,9 @@ class ChatViewModel(
     fun clearPendingFile() {
         _uiState.value = _uiState.value.copy(
             pendingFileText = null,
-            pendingFileName = null
+            pendingFileName = null,
+            pendingFileKind = null,
+            pendingFileWarning = null
         )
     }
 
@@ -682,6 +887,14 @@ class ChatViewModel(
             }
         }
 
+        // Pages of a scan: several pictures in one turn, which the ordinary send path (one
+        // image per request) cannot express on its own.
+        val pages = _uiState.value.pendingPages
+        if (!pages.isNullOrEmpty()) {
+            sendPages(content, pages, _uiState.value.pendingPagesName.orEmpty())
+            return
+        }
+
         if (content.isBlank() && _uiState.value.pendingImageBytes == null && _uiState.value.pendingFileText == null) return
 
         val imageData = _uiState.value.pendingImageBytes
@@ -721,6 +934,78 @@ class ChatViewModel(
                 handleSendFailure(error)
             }.collect { event ->
                 handleStreamEvent(event)
+            }
+        }
+    }
+
+    /**
+     * Send the first pages of a scanned PDF, in order, as one turn.
+     *
+     * The earlier pages are written as their own user rows and the LAST one rides the request as
+     * the current attachment, because one image per request is the shape the whole send path
+     * has. The document row then remembers all of their ids, which is what makes the follow-up
+     * carry the set rather than the ordinary two most recent pictures - page 1 of a letter is
+     * the page that says who it is from.
+     */
+    private fun sendPages(content: String, pages: List<ByteArray>, name: String) {
+        val context: Context = getApplication()
+        val question = content.ifBlank { context.getString(R.string.document_pages_question) }
+        clearPendingPages()
+
+        lastRequest = {
+            streamingJob = viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(isLoading = true, isStreaming = false, error = null)
+                chatRepository.regenerateLastReply(currentConversationId)
+                    .catch { error -> handleSendFailure(error) }
+                    .collect { event -> handleStreamEvent(event) }
+            }
+        }
+        streamingJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, isStreaming = false, error = null)
+
+            val pageIds = ArrayList<Long>()
+            for ((index, bytes) in pages.dropLast(1).withIndex()) {
+                pageIds.add(
+                    chatRepository.saveMessage(
+                        conversationId = currentConversationId,
+                        role = "user",
+                        content = context.getString(R.string.document_page_label, index + 1, name),
+                        imageBase64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP),
+                        imageMimeType = "image/jpeg"
+                    )
+                )
+            }
+
+            // text is empty: there is nothing to chunk and nothing to retrieve, and chunkCount
+            // stays 0 so the request assembly never tries to quote a file made of pictures.
+            val documentId = chatRepository.saveDocument(
+                conversationId = currentConversationId,
+                doc = DocumentExtract.Doc(
+                    name = name,
+                    kind = DocumentExtract.KIND_PDF,
+                    pages = pages.size,
+                    text = ""
+                ),
+                attachedMessageId = pageIds.firstOrNull()
+            )
+            refreshMessages()
+            refreshDocuments()
+
+            chatRepository.sendMessageStreaming(
+                conversationId = currentConversationId,
+                userContent = question,
+                model = _uiState.value.selectedModel,
+                imageData = pages.last(),
+                imageMimeType = "image/jpeg"
+            ).catch { error ->
+                handleSendFailure(error)
+            }.collect { event ->
+                handleStreamEvent(event)
+                if (event is ChatRepository.StreamEvent.UserSaved) {
+                    pageIds.add(event.message.id)
+                    chatRepository.setDocumentPages(documentId, pageIds)
+                    refreshDocuments()
+                }
             }
         }
     }

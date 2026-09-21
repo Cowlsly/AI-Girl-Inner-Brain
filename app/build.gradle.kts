@@ -175,6 +175,16 @@ dependencies {
     // SQLCipher
     implementation(libs.sqlcipher)
     implementation(libs.sqlite)
+
+    // PDF text extraction (Apache PDFBox 2.0.27 ported to Android; Apache 2.0, pure Java).
+    // BouncyCastle is excluded on purpose: of the 978 classes in the AAR only
+    // PublicKeySecurityHandler and SecurityProvider reference it, so the exclusion costs
+    // certificate-encrypted PDFs (rare, refused with a message) and saves ~11 MB of jars.
+    // Password- and permissions-encrypted PDFs go through StandardSecurityHandler, which
+    // uses javax.crypto and is unaffected.
+    implementation(libs.pdfbox.android) {
+        exclude(group = "org.bouncycastle")
+    }
 }
 
 
