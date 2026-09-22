@@ -6,6 +6,7 @@ import android.content.Intent
 import android.util.Log
 import app.maskan.chat.MaskanApplication
 import app.maskan.chat.ondevice.GemmaPrompt
+import app.maskan.chat.ondevice.LlmEngine
 import app.maskan.chat.ondevice.ModelCatalog
 import app.maskan.chat.util.TokenEstimate
 import java.io.File
@@ -67,7 +68,7 @@ class LlmProbeReceiver : BroadcastReceiver() {
         Log.d(TAG, "probe file=" + model.fileName + " bytes=" + file.length() +
             " window=" + model.contextTokens)
 
-        val engine = app.llmEngine
+        val engine = engineFor(app)
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val loadStart = System.currentTimeMillis()
             try {
@@ -122,5 +123,18 @@ class LlmProbeReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "MaskanLlmProbe"
         private const val DEFAULT_PROMPT = "Say OK."
+
+        /**
+         * The one engine, held here rather than on the Application.
+         *
+         * On-device generation is cut from 2.6.0 and MediaPipe is a debug-only dependency, so
+         * nothing in the shipped app may hold a model - not even a lazy field that is never
+         * touched. The probe is the only thing that loads one now.
+         */
+        private var engine: LlmEngine? = null
+
+        @Synchronized
+        private fun engineFor(app: MaskanApplication): LlmEngine =
+            engine ?: LlmEngine(app).also { engine = it }
     }
 }

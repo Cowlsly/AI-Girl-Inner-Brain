@@ -91,20 +91,6 @@ android {
         baseline = file("lint-baseline.xml")
     }
 
-    packaging {
-        jniLibs {
-            // The on-device engine's native library is 26.6 MB on arm64 and 108 MB across the
-            // four ABIs in the universal APK. Compressed in the APK it is 10.3 MB and 42 MB.
-            // AGP's default (uncompressed, mapped straight out of the APK) is the better
-            // runtime trade and the wrong download trade: the universal APK is what F-Droid
-            // serves and what people sideload, and 136 MB over mobile data does not finish.
-            // The cost, accepted once and stated here: the libraries are extracted at install,
-            // so roughly 26 MB more storage on arm64, a slower first launch, and Play marking
-            // the delivery as non-recommended.
-            useLegacyPackaging = true
-        }
-    }
-
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
@@ -200,15 +186,18 @@ dependencies {
         exclude(group = "org.bouncycastle")
     }
 
-    // MediaPipe LLM Inference - the on-device model (Apache 2.0; androidx.annotation, Guava and
-    // protobuf-javalite are its only transitive dependencies, and no Play Services). Almost all
-    // of its weight is one prebuilt native library per ABI, in the same shape as the SQLCipher
-    // AAR above; R8 shrinks the Java side to about 38 KB. The MODEL is not here and is never in
-    // the APK - it is downloaded, verified and deleted by the user (see ondevice/).
+    // MediaPipe LLM Inference - DEBUG ONLY, and not part of any release.
     //
-    // Images on Gemma-3n would need com.google.mediapipe:tasks-core as well (MPImage lives
-    // there, not here) - another 11 MB native library per ABI. Held for 2.7.
-    implementation(libs.mediapipe.genai)
+    // On-device generation was measured in session 5 and cut from 2.6.0: the small model that
+    // fits a 6 GB phone answers "what is the capital of Jordan" with "Jerusalem", and the one
+    // whose Arabic is good needs 4.5 GB free and writes at under 2 tokens a second. The numbers
+    // and the verbatim answers are in Maskan/2.6_sessions/ondevice_measurements.md.
+    //
+    // It stays here on the debug side so LlmProbeReceiver still runs, and so the next small
+    // model anyone wants to argue for is measured the same way rather than estimated. Nothing
+    // in a release APK references it and the AAR is not packaged into one - which is also why
+    // useLegacyPackaging is gone: it existed only to compress this library.
+    debugImplementation(libs.mediapipe.genai)
 }
 
 
