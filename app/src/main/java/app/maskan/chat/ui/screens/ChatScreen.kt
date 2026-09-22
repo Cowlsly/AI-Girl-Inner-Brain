@@ -1374,7 +1374,11 @@ private fun MessageBubble(
      * to share with selection, so this takes a tap of its own.
      */
     onRemember: (() -> Unit)? = null,
-    /** False hides the speak button on every reply. The "Read this to me" chip is not this. */
+    /**
+     * False hides the speak button on every reply. The "Read this to me" chip is not this, and
+     * neither is the STOP control: a reply that is speaking keeps its button either way, or
+     * speech the chip started could not be stopped at all.
+     */
     speakButtonShown: Boolean = true,
     /**
      * Ask the same question again and replace this answer. Offered on the LAST reply only: a
@@ -1533,7 +1537,12 @@ private fun MessageBubble(
                         )
                     }
                 }
-                if (!isUser && message.content.isNotBlank() && speakButtonShown) {
+                // While this reply is BEING SPOKEN the control is always here, whatever the
+                // setting says - because it is the same button, and with the setting off there
+                // was no way to stop speech that "Read this to me" had started. (Humam, on the
+                // device: the only way out was deleting the message.) Nothing shows when nothing
+                // is playing, which is what the setting is actually about.
+                if (!isUser && message.content.isNotBlank() && (speakButtonShown || isSpeaking)) {
                     IconButton(
                         onClick = onSpeakToggle
                     ) {
