@@ -23,6 +23,17 @@ fun createEncryptedPrefsOrFallback(context: Context, prefsName: String): SharedP
     }
 }
 
+/**
+ * The same file, opened WITHOUT the recovery path above.
+ *
+ * `createEncryptedPrefsOrFallback` deletes a preferences file it cannot read, which is the right
+ * answer when the app needs somewhere to write and the wrong one everywhere else. The backup
+ * reads every preferences file on disk, including ones it has never seen; a file it cannot open
+ * must throw, not disappear.
+ */
+fun openEncryptedPrefsStrict(context: Context, prefsName: String): SharedPreferences =
+    buildEncryptedPrefs(context, prefsName)
+
 private fun buildEncryptedPrefs(context: Context, prefsName: String): SharedPreferences {
     val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)

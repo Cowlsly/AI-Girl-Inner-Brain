@@ -13,6 +13,10 @@ object Routes {
     const val PRIVACY_INTRO = "privacy_intro"
     const val PRIVACY = "privacy"
 
+    /** Settings -> Backup. Its own screen: it states what is in the file, takes a password and
+     *  then does real work with a cancel that means it. */
+    const val BACKUP = "backup"
+
     /** A folder seen as a project: its instructions and memory files. */
     const val FOLDER = "folder/{folderId}"
 

@@ -26,6 +26,7 @@ import app.maskan.chat.BuildConfig
 import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.navigation.Routes
 import app.maskan.chat.ui.screens.AboutScreen
+import app.maskan.chat.ui.screens.BackupScreen
 import app.maskan.chat.ui.screens.ChatScreen
 import app.maskan.chat.ui.screens.ConversationListScreen
 import app.maskan.chat.ui.screens.FolderScreen
@@ -35,6 +36,7 @@ import app.maskan.chat.ui.screens.PrivacyIntroScreen
 import app.maskan.chat.ui.screens.PrivacyScreen
 import app.maskan.chat.ui.screens.WelcomeScreen
 import app.maskan.chat.ui.theme.MaskanTheme
+import app.maskan.chat.ui.viewmodel.BackupViewModel
 import app.maskan.chat.ui.viewmodel.ConversationListViewModel
 import app.maskan.chat.ui.viewmodel.ProjectFile
 import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
@@ -78,6 +80,7 @@ class MainActivity : ComponentActivity() {
         val factory = MaskanViewModelFactory(app)
         val conversationListViewModel = ViewModelProvider(this, factory)[ConversationListViewModel::class.java]
         val settingsViewModel = ViewModelProvider(this, factory)[SettingsViewModel::class.java]
+        val backupViewModel = ViewModelProvider(this, factory)[BackupViewModel::class.java]
 
         // Read the language from the resource configuration - the source the strings actually
         // resolve from. LocaleManager.applicationLocales misses a per-app language set from the
@@ -96,6 +99,7 @@ class MainActivity : ComponentActivity() {
                 AppNavigation(
                     conversationListViewModel = conversationListViewModel,
                     settingsViewModel = settingsViewModel,
+                    backupViewModel = backupViewModel,
                     preferenceRepository = app.preferenceRepository,
                     onRestart = { recreate() },
                     isFirstLaunch = isFirstLaunch,
@@ -118,6 +122,7 @@ class MainActivity : ComponentActivity() {
 private fun AppNavigation(
     conversationListViewModel: ConversationListViewModel,
     settingsViewModel: SettingsViewModel,
+    backupViewModel: BackupViewModel,
     preferenceRepository: PreferenceRepository,
     onRestart: () -> Unit,
     isFirstLaunch: Boolean,
@@ -285,6 +290,7 @@ private fun AppNavigation(
                 },
                 onNavigateToAbout = { navController.navigate(Routes.ABOUT) },
                 onNavigateToPrivacy = { navController.navigate(Routes.PRIVACY) },
+                onNavigateToBackup = { navController.navigate(Routes.BACKUP) },
                 onLocaleChanged = { onRestart() },
                 onEditSharedMemory = {
                     navController.navigate(
@@ -292,6 +298,13 @@ private fun AppNavigation(
                     )
                 },
                 isFirstLaunch = isFirstLaunchSettings
+            )
+        }
+
+        composable(Routes.BACKUP) {
+            BackupScreen(
+                viewModel = backupViewModel,
+                onNavigateBack = { navController.popBackStack() }
             )
         }
 

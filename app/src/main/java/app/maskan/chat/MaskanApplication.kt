@@ -49,6 +49,7 @@ import app.maskan.chat.data.repository.LocaleRepository
 import app.maskan.chat.data.repository.PreferenceRepository
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import app.maskan.chat.ui.viewmodel.BackupViewModel
 import app.maskan.chat.ui.viewmodel.ChatViewModel
 import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
 import app.maskan.chat.ui.viewmodel.ConversationListViewModel
@@ -122,6 +123,13 @@ class MaskanApplication : Application() {
     /** For the video worker, which runs with no ViewModel or repository in sight. */
     val messageDao by lazy { database.messageDao() }
 
+    /**
+     * The database itself, for backup. A DAO cannot answer "copy every table as it stands" -
+     * that is `sqlcipher_export` on the open connection, and the debug round-trip probe compares
+     * the live tables against the archived ones through the same handle.
+     */
+    val appDatabase: AppDatabase get() = database
+
     // ── Repositories ───────────────────────────────────────────────────
 
     val keyRepository by lazy { KeyRepository(this) }
@@ -129,6 +137,23 @@ class MaskanApplication : Application() {
     val preferenceRepository by lazy { PreferenceRepository(this) }
 
     val imageStore by lazy { app.maskan.chat.util.ImageStore(this) }
+
+    // ── Backup ────────────────────────────────────────────────────────
+
+    val backupWriter by lazy {
+        app.maskan.chat.data.backup.BackupWriter(this, database)
+    }
+
+    /**
+     * The schema is asked of the OPEN DATABASE rather than read from a constant: a constant that
+     * has to be kept in step with `AppDatabase`'s version is a constant that will one day be out
+     * of step, and the number decides whether an archive is refused as "made by a newer Maskan".
+     */
+    val backupReader by lazy {
+        app.maskan.chat.data.backup.BackupReader(this) {
+            database.openHelper.readableDatabase.version
+        }
+    }
 
     // ── On-device model ─────────────────────────────────
 
@@ -455,6 +480,8 @@ class MaskanViewModelFactory(private val app: MaskanApplication) : ViewModelProv
         return when {
             modelClass.isAssignableFrom(ConversationListViewModel::class.java) ->
                 ConversationListViewModel(app.chatRepository, app.keyRepository) as T
+            modelClass.isAssignableFrom(BackupViewModel::class.java) ->
+                BackupViewModel(app) as T
             modelClass.isAssignableFrom(SettingsViewModel::class.java) ->
                 SettingsViewModel(app, app.keyRepository, app.localeRepository, app.preferenceRepository, app.chatRepository) as T
             else -> throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")

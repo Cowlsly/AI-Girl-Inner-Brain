@@ -75,6 +75,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToAbout: () -> Unit = {},
     onNavigateToPrivacy: () -> Unit = {},
+    onNavigateToBackup: () -> Unit = {},
     onLocaleChanged: () -> Unit = {},
     onModelChanged: (String) -> Unit = {},
     /** Opens the shared memory file in the same editor a folder's files use. */
@@ -1169,6 +1170,29 @@ fun SettingsScreen(
             )
 
             Spacer(modifier = Modifier.height(32.dp))
+
+            // Backup. Above About and Privacy because it is a thing you DO, and those two
+            // are things you read.
+            TextButton(
+                onClick = onNavigateToBackup,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.backup_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
 
             // About & Privacy link
             TextButton(
