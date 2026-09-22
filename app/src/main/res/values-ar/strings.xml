@@ -502,4 +502,27 @@
     <string name="backup_failed">لم تُكتب النسخة الاحتياطية، ولم يُحفظ شيء.</string>
     <string name="backup_nothing">لا يوجد ما يُنسخ بعد.</string>
     <string name="backup_dismiss">حسناً</string>
+    <string name="restore_section_title">الاستعادة</string>
+    <string name="restore_intro">ألديك ملف نسخة احتياطية من هذا الهاتف أو من هاتف آخر؟ الاستعادة تستبدل كل ما على هذا الهاتف بما في الملف.</string>
+    <string name="restore_choose">استعادة من نسخة احتياطية</string>
+    <string name="restore_reading">جارٍ قراءة الملف…</string>
+    <string name="restore_confirm_title">أتستعيد هذه النسخة؟</string>
+    <string name="restore_made">أُنشئت في %1$s بمسكن %2$s</string>
+    <string name="restore_file_has">في الملف:</string>
+    <string name="restore_phone_has">على هذا الهاتف الآن:</string>
+    <string name="restore_keys_yes">مفاتيح API: مضمّنة</string>
+    <string name="restore_keys_no">مفاتيح API: لا شيء في هذا الملف</string>
+    <string name="restore_replaces">سيُستبدل كل ما على هذا الهاتف بما في الملف: المحادثات والمجلدات والإعدادات ومفاتيح API. أما الصور والمقاطع التي ولّدها التطبيق فتبقى على الهاتف.</string>
+    <string name="restore_confirm">نعم، استبدل كل شيء</string>
+    <string name="restore_password_prompt">اكتب كلمة السر التي أُنشئت بها هذه النسخة.</string>
+    <string name="restore_start">استعادة</string>
+    <string name="restore_working">جارٍ الاستعادة… لا يتغير شيء على هذا الهاتف حتى تكتمل.</string>
+    <string name="restore_refused_not_backup">هذا ليس ملف نسخة احتياطية من مسكن، ولم يتغير شيء.</string>
+    <string name="restore_refused_newer">أُنشئت هذه النسخة بإصدار أحدث من مسكن. حدّث التطبيق ثم حاول مجددًا، فلم يتغير شيء.</string>
+    <string name="restore_wrong_password">كلمة السر خطأ، ولم يتغير شيء. حاول مجددًا.</string>
+    <string name="restore_refused_damaged">هذا الملف تالف ولا يمكن استعادته، ولم يتغير شيء.</string>
+    <string name="restore_failed">لم تكتمل الاستعادة، ولم يتغير شيء على هذا الهاتف.</string>
+    <string name="restore_done">استُعيدت النسخة. سيُعاد تشغيل مسكن الآن، فإن لم يُفتح من تلقاء نفسه فافتحه مجددًا.</string>
+    <string name="restore_picture_missing">هذه الصورة لم تكن في النسخة الاحتياطية.</string>
+    <string name="restore_clip_missing">هذا المقطع لم يكن في النسخة الاحتياطية.</string>
 </resources>

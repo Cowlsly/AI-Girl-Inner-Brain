@@ -43,6 +43,9 @@ class BackupProbeReceiver : BroadcastReceiver() {
                 if (what == "all" || what == "vectors") vectors()
                 if (what == "seed") seed(context, intent.getIntExtra("chats", 40))
                 if (what == "unseed") unseed(context)
+                if (what == "olderschema") {
+                    olderSchema(context, intent.getStringExtra("password") ?: ARABIC_PASSWORD)
+                }
                 if (what == "all" || what == "roundtrip") roundTrip(context)
             } catch (e: Throwable) {
                 Log.e(TAG, "probe failed", e)
@@ -338,6 +341,49 @@ class BackupProbeReceiver : BroadcastReceiver() {
         flipped.delete()
         Log.i(TAG, "probe archive left at " + file.absolutePath + " (" + file.length() + " bytes)")
         Log.i(TAG, if (failures == 0) "== round trip: ALL PASS ==" else "== round trip: " + failures + " FAILED ==")
+    }
+
+    // -- 2b. An archive from an OLDER Maskan ------------------------------
+
+    /**
+     * Writes `probe-schema8.mkb`: this phone's data as a 2.6-session-3 database would have held
+     * it - no `documents` table, `user_version` 8. Restoring it must run MIGRATION_8_9 and keep
+     * every row. Pull it with `run-as`, push it to Downloads, pick it in the app.
+     */
+    private suspend fun olderSchema(context: Context, password: String) {
+        val app = context.applicationContext as MaskanApplication
+        Log.i(TAG, "== schema-8 archive (password of " + password.length + " chars) ==")
+        val base = File(context.cacheDir, "probe-base.mkb").apply { delete() }
+        app.backupWriter.write(Uri.fromFile(base), ARABIC_PASSWORD) {}
+        val out = File(context.cacheDir, "probe-s8-extract").apply { deleteRecursively(); mkdirs() }
+        val extracted = app.backupReader.extractTo(Uri.fromFile(base), ARABIC_PASSWORD, out)
+
+        val db = net.zetetic.database.sqlcipher.SQLiteDatabase.openDatabase(
+            extracted.database.absolutePath, extracted.manifest.dbKey, null,
+            net.zetetic.database.sqlcipher.SQLiteDatabase.OPEN_READWRITE, null, null
+        )
+        val counts = try {
+            db.execSQL("DROP TABLE IF EXISTS documents")
+            db.execSQL("PRAGMA user_version = 8")
+            val version = db.rawQuery("PRAGMA user_version", null)
+                .use { if (it.moveToFirst()) it.getInt(0) else -1 }
+            Log.i(TAG, "snapshot rewritten: user_version " + version + ", documents dropped")
+            extracted.manifest.counts.copy(documents = 0)
+        } finally {
+            db.close()
+        }
+
+        val target = File(context.cacheDir, "probe-schema8.mkb").apply { delete() }
+        val header = app.backupWriter.writeFromSnapshot(
+            Uri.fromFile(target), password, extracted.database,
+            extracted.manifest.dbKey, 8, counts
+        ) {}
+        // Read it back the way restore will, so a bad probe file is found here and not there.
+        val check = app.backupReader.readHeader(Uri.fromFile(target))
+        Log.i(TAG, "schema-8 archive at " + target.absolutePath + " (" + target.length() +
+            " bytes): header schema " + check.header.schema + ", counts " + header.counts)
+        out.deleteRecursively()
+        base.delete()
     }
 
     // -- 3. Volume, so the numbers mean something ------------------------

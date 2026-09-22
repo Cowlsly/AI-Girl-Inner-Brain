@@ -35,7 +35,11 @@ Your API keys are encrypted with AES-256-GCM on device. Your conversations never
 ## Features
 
 - **Bring Your Own Key (BYOK)** — use your own API keys directly, no middlemen, no subscription
-- **12 AI providers** — cloud and local, one app
+- **13 AI providers** — cloud, local, and a model on your own phone that needs no key
+- **Folders as projects** — instructions and memory carried into every chat inside a folder
+- **Take a photo and ask** — translate this, read this to me, what is this?
+- **Ask about a document** — PDF, Word and Excel, read in parts with the cost shown first
+- **Backup and restore** — one encrypted file with everything, including your keys, restored on a new phone
 - **Encrypted on device** — API keys stored with AES-256-GCM via Android Keystore, conversations encrypted with SQLCipher
 - **Network-locked** — `network_security_config.xml` restricts traffic to only enabled provider hosts
 - **Markdown rendering** — AI replies render headings, bold, lists, and code blocks, including Arabic/RTL
@@ -56,9 +60,9 @@ Your API keys are encrypted with AES-256-GCM on device. Your conversations never
 - **3 languages** — English, Arabic, Thai (full UI translations)
 - **Arabic-first design** — full RTL layout with proper Arabic typography
 - **Dark mode** — follows system theme automatically
-- **Dialect-aware translation** — translate to Levantine, Egyptian, Gulf, Maghrebi, or MSA
-- **English↔Thai translation presets** — dedicated translation support
-- **12 system prompt presets** — General Assistant, Arabic Writing Coach, Code Reviewer, Classical Arabic Reader, and more
+- **Your dialect governs every Arabic reply** — Levantine, Egyptian, Gulf, Maghrebi, Algerian, or MSA
+- **Translation presets between English, Arabic and Thai**, in the picker of the language they are for
+- **16 system prompt presets** — General Assistant, Arabic Writing Coach, Code Reviewer, Classical Arabic Reader, and more
 - **Classical Arabic literary helper** — vocabulary, i'rab, balagha analysis
 - **Copy & select** — long-press AI responses to copy text
 - **Folder organization** — group conversations with custom pastel colors

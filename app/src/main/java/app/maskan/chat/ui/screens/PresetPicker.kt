@@ -32,6 +32,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.PlatformTextStyle
@@ -167,15 +170,33 @@ fun PresetPicker(
 }
 
 /**
+ * A translation card's icon is two flags; shown with an arrow between them, source first in the
+ * reading direction, like the card's name. Two regional-indicator flags are exactly 8 UTF-16
+ * units; anything else is a single emoji and is returned as it is.
+ */
+private fun presetIcon(icon: String, rtl: Boolean): String {
+    if (icon.length != 8 || icon.codePointCount(0, 8) != 4) return icon
+    val source = icon.substring(0, 4)
+    val target = icon.substring(4)
+    return if (rtl) target + " \u2190 " + source else source + " \u2192 " + target
+}
+
+/**
  * Whether a preset belongs on the picker for someone reading the app in [uiLanguage].
  *
- * Only the translation pairs are ever hidden, and only from the language that is not in them.
- * Everything else is always shown.
+ * Humam's table, 2026-09-22 (session 8):
+ *  - English: English to Arabic, English to Thai. Not the "to English" pairs, not the Arabic
+ *    writing coach, not the Classical Arabic reader.
+ *  - Thai: Thai to English, Thai to Arabic. Not the pairs that start from English or Arabic,
+ *    not the coach, not the reader.
+ *  - Arabic: Arabic to English, Arabic to Thai, the coach and the reader. Not the pairs that
+ *    start from English or Thai.
+ * Everything not named here is always shown.
  */
-private fun visibleIn(presetId: String, uiLanguage: String): Boolean = when (presetId) {
-    "en_to_th", "th_to_en" -> uiLanguage != "ar"
-    "en_to_ar", "ar_to_en" -> uiLanguage != "th"
-    else -> true
+private fun visibleIn(presetId: String, uiLanguage: String): Boolean = when (uiLanguage) {
+    "ar" -> presetId !in setOf("en_to_ar", "en_to_th", "th_to_en", "th_to_ar")
+    "th" -> presetId !in setOf("en_to_ar", "ar_to_en", "en_to_th", "ar_to_th", "arabic_coach", "classical_arabic")
+    else -> presetId !in setOf("ar_to_en", "th_to_en", "th_to_ar", "ar_to_th", "arabic_coach", "classical_arabic")
 }
 
 /** Horizontal room to tap, no vertical padding of its own - the label sets the height. */
@@ -218,9 +239,12 @@ private fun PresetCard(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = preset.icon,
+                    text = presetIcon(preset.icon, LocalLayoutDirection.current == LayoutDirection.Rtl),
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontSize = 18.sp,
+                        // Pinned: the string below is already in visual order for this layout,
+                        // and a run of neutral emoji would otherwise be reordered by BiDi.
+                        textDirection = TextDirection.Ltr,
                         platformStyle = PlatformTextStyle(includeFontPadding = false),
                         lineHeightStyle = LineHeightStyle(
                             alignment = LineHeightStyle.Alignment.Center,

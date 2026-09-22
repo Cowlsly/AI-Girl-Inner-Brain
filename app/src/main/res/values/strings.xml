@@ -502,4 +502,27 @@
     <string name="backup_failed">The backup was not written. Nothing was saved.</string>
     <string name="backup_nothing">There is nothing to back up yet.</string>
     <string name="backup_dismiss">OK</string>
+    <string name="restore_section_title">Restore</string>
+    <string name="restore_intro">Have a backup file from this phone or another? Restoring replaces everything on this phone with what is in the file.</string>
+    <string name="restore_choose">Restore from a backup</string>
+    <string name="restore_reading">Reading the file…</string>
+    <string name="restore_confirm_title">Restore this backup?</string>
+    <string name="restore_made">Made on %1$s by Maskan %2$s</string>
+    <string name="restore_file_has">In the file:</string>
+    <string name="restore_phone_has">On this phone now:</string>
+    <string name="restore_keys_yes">API keys: included</string>
+    <string name="restore_keys_no">API keys: none in this file</string>
+    <string name="restore_replaces">Everything on this phone will be replaced by what is in the file: chats, folders, settings and API keys. Pictures and clips the app generated stay on the phone.</string>
+    <string name="restore_confirm">Yes, replace everything</string>
+    <string name="restore_password_prompt">Type the password this backup was made with.</string>
+    <string name="restore_start">Restore</string>
+    <string name="restore_working">Restoring… Nothing on this phone changes until this finishes.</string>
+    <string name="restore_refused_not_backup">This is not a Maskan backup file. Nothing was changed.</string>
+    <string name="restore_refused_newer">This backup was made by a newer version of Maskan. Update the app and try again. Nothing was changed.</string>
+    <string name="restore_wrong_password">Wrong password. Nothing was changed. Try again.</string>
+    <string name="restore_refused_damaged">This file is damaged and cannot be restored. Nothing was changed.</string>
+    <string name="restore_failed">The restore did not complete. Nothing on this phone was changed.</string>
+    <string name="restore_done">Restored. Maskan will now restart. If it does not reopen by itself, open Maskan again.</string>
+    <string name="restore_picture_missing">This picture was not in the backup.</string>
+    <string name="restore_clip_missing">This clip was not in the backup.</string>
 </resources>

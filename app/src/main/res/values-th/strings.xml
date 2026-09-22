@@ -502,4 +502,27 @@
     <string name="backup_failed">เขียนไฟล์สำรองข้อมูลไม่สำเร็จ ไม่ได้บันทึกไฟล์ใดไว้</string>
     <string name="backup_nothing">ยังไม่มีข้อมูลให้สำรอง</string>
     <string name="backup_dismiss">ตกลง</string>
+    <string name="restore_section_title">กู้คืนข้อมูล</string>
+    <string name="restore_intro">มีไฟล์สำรองข้อมูลจากเครื่องนี้หรือเครื่องอื่นไหม การกู้คืนจะแทนที่ทุกอย่างในเครื่องนี้ด้วยสิ่งที่อยู่ในไฟล์</string>
+    <string name="restore_choose">กู้คืนจากไฟล์สำรองข้อมูล</string>
+    <string name="restore_reading">กำลังอ่านไฟล์…</string>
+    <string name="restore_confirm_title">กู้คืนจากไฟล์นี้หรือไม่</string>
+    <string name="restore_made">สร้างเมื่อ %1$s ด้วยมัสกัน %2$s</string>
+    <string name="restore_file_has">ในไฟล์:</string>
+    <string name="restore_phone_has">ในเครื่องนี้ตอนนี้:</string>
+    <string name="restore_keys_yes">คีย์ API: รวมอยู่ด้วย</string>
+    <string name="restore_keys_no">คีย์ API: ไม่มีในไฟล์นี้</string>
+    <string name="restore_replaces">ทุกอย่างในเครื่องนี้จะถูกแทนที่ด้วยสิ่งที่อยู่ในไฟล์ ทั้งแชท โฟลเดอร์ การตั้งค่า และคีย์ API ส่วนรูปภาพและคลิปที่แอปสร้างขึ้นจะยังอยู่ในเครื่อง</string>
+    <string name="restore_confirm">ใช่ แทนที่ทั้งหมด</string>
+    <string name="restore_password_prompt">พิมพ์รหัสผ่านที่ใช้สร้างไฟล์สำรองข้อมูลนี้</string>
+    <string name="restore_start">กู้คืน</string>
+    <string name="restore_working">กำลังกู้คืน… จะไม่มีอะไรในเครื่องนี้เปลี่ยนแปลงจนกว่าจะเสร็จ</string>
+    <string name="restore_refused_not_backup">ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลของมัสกัน ไม่มีอะไรเปลี่ยนแปลง</string>
+    <string name="restore_refused_newer">ไฟล์สำรองข้อมูลนี้สร้างด้วยมัสกันเวอร์ชันใหม่กว่า อัปเดตแอปแล้วลองอีกครั้ง ไม่มีอะไรเปลี่ยนแปลง</string>
+    <string name="restore_wrong_password">รหัสผ่านไม่ถูกต้อง ไม่มีอะไรเปลี่ยนแปลง ลองอีกครั้ง</string>
+    <string name="restore_refused_damaged">ไฟล์นี้เสียหายและกู้คืนไม่ได้ ไม่มีอะไรเปลี่ยนแปลง</string>
+    <string name="restore_failed">การกู้คืนไม่เสร็จสมบูรณ์ ไม่มีอะไรในเครื่องนี้เปลี่ยนแปลง</string>
+    <string name="restore_done">กู้คืนแล้ว มัสกันจะเริ่มใหม่เดี๋ยวนี้ หากแอปไม่เปิดขึ้นมาเอง ให้เปิดมัสกันอีกครั้ง</string>
+    <string name="restore_picture_missing">รูปนี้ไม่ได้อยู่ในไฟล์สำรองข้อมูล</string>
+    <string name="restore_clip_missing">คลิปนี้ไม่ได้อยู่ในไฟล์สำรองข้อมูล</string>
 </resources>

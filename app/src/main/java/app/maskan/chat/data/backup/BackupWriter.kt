@@ -93,6 +93,33 @@ class BackupWriter(
         }
     }
 
+    /**
+     * The archive around a snapshot that already exists, at a schema the caller states.
+     *
+     * For the debug probe only, which needs archives at schemas this app no longer has so that
+     * restore's migration path can be exercised on a real file. [write] is the only path a user
+     * takes; this one trusts its caller about [schema] and [counts].
+     */
+    suspend fun writeFromSnapshot(
+        uri: Uri,
+        password: String,
+        snapshot: File,
+        dbKeyHex: String,
+        schema: Int,
+        counts: BackupCounts,
+        onProgress: (Float) -> Unit
+    ): BackupHeader = withContext(Dispatchers.IO) {
+        require(password.isNotEmpty()) { "empty password" }
+        var ok = false
+        try {
+            val header = assemble(uri, snapshot, dbKeyHex, schema, counts, password, onProgress)
+            ok = true
+            header
+        } finally {
+            if (!ok) discard(uri)
+        }
+    }
+
     // -- The snapshot ---------------------------------------------------
 
     /** Returns the schema version the snapshot carries, read back out of the file it wrote. */
@@ -105,35 +132,69 @@ class BackupWriter(
         db.query("PRAGMA wal_checkpoint(FULL)").use { it.moveToFirst() }
         val userVersion = pragmaLong(db, "user_version").toInt()
 
-        // Interpolated, not bound: the key is our own 64 hex characters and the path is a file we
-        // just named inside cacheDir. Neither can carry a quote.
-        val path = target.absolutePath
-        db.execSQL("ATTACH DATABASE '" + path + "' AS " + ATTACH_NAME + " KEY '" + keyHex + "'")
+        // A handle of our own, with a pool of exactly ONE connection, because ATTACH is
+        // per-connection and Room's pool has several. Through Room: execSQL("ATTACH") turns WAL
+        // off first and throws if any other thread holds a connection (the device found it at
+        // boot; a user would have found it as "the backup was not written" at random), while
+        // query("ATTACH") lands on a read connection and the export on the primary then answers
+        // "unknown database". Opened WITHOUT the WAL flag, this handle serialises everything on
+        // one connection and never reconfigures anything Room is using. Session 7's version
+        // only worked because the WAL side effect collapsed Room's pool to one connection.
+        val raw = net.zetetic.database.sqlcipher.SQLiteDatabase.openDatabase(
+            context.getDatabasePath(BackupFormat.DATABASE_NAME).absolutePath,
+            livePassphrase(),
+            null,
+            // CREATE_IF_NECESSARY is for the ATTACHED file, not this one: SQLite opens an
+            // attached database with the main connection's flags, and without it the fresh
+            // snapshot file cannot be created ("unable to open database", code 14).
+            net.zetetic.database.sqlcipher.SQLiteDatabase.OPEN_READWRITE or
+                net.zetetic.database.sqlcipher.SQLiteDatabase.CREATE_IF_NECESSARY,
+            null,
+            null
+        ) ?: throw IOException("the live database would not open a second time")
         try {
-            exportInto(db)
-            // Set explicitly rather than trusted to be copied. This one line is what lets an
-            // archive from an older Maskan restore at all: Room reads user_version to decide
-            // which migrations to run, and a snapshot that claims version 0 would be treated as
-            // a brand-new database and rebuilt empty.
-            db.execSQL("PRAGMA " + ATTACH_NAME + ".user_version = " + userVersion)
+            val journal = raw.rawQuery("PRAGMA journal_mode", null)
+                .use { if (it.moveToFirst()) it.getString(0) else "?" }
+            Log.d(TAG, "export connection open; journal_mode " + journal)
+
+            // Interpolated, not bound: the key is our own 64 hex characters and the path is a
+            // file we just named inside cacheDir. Neither can carry a quote.
+            val path = target.absolutePath
+            raw.execSQL("ATTACH DATABASE '" + path + "' AS " + ATTACH_NAME + " KEY '" + keyHex + "'")
+            try {
+                exportInto(raw)
+                // Set explicitly rather than trusted to be copied. This one line is what lets an
+                // archive from an older Maskan restore at all: Room reads user_version to decide
+                // which migrations to run, and a snapshot that claims version 0 would be treated
+                // as a brand-new database and rebuilt empty.
+                raw.execSQL("PRAGMA " + ATTACH_NAME + ".user_version = " + userVersion)
+            } finally {
+                runCatching { raw.execSQL("DETACH DATABASE " + ATTACH_NAME) }
+            }
         } finally {
-            runCatching { db.execSQL("DETACH DATABASE " + ATTACH_NAME) }
+            raw.close()
         }
         coroutineContext.ensureActive()
         return userVersion
     }
 
+    /** The key Room opened the live database with - the same read MaskanApplication does. */
+    private fun livePassphrase(): String =
+        app.maskan.chat.data.repository.openEncryptedPrefsStrict(context, BackupFormat.DB_PREFS_NAME)
+            .getString(BackupFormat.DB_PREFS_KEY, null)
+            ?: throw IOException("no database key")
+
     /**
      * ONE call, and no retry around it.
      *
      * `execSQL` runs this statement and then throws, because it returns rows - so a catch that
-     * falls back to `query` runs the export a SECOND time, into an attached database that now
+     * falls back to `rawQuery` runs the export a SECOND time, into an attached database that now
      * already has the tables, and the device answers "table `conversations` already exists".
-     * A retry wrapped around a call with side effects is not a safety net. `query` is the path
+     * A retry wrapped around a call with side effects is not a safety net. `rawQuery` is the path
      * with the contract we want: the statement runs when the cursor is stepped.
      */
-    private fun exportInto(db: SupportSQLiteDatabase) {
-        db.query("SELECT sqlcipher_export('" + ATTACH_NAME + "')").use { it.moveToFirst() }
+    private fun exportInto(db: net.zetetic.database.sqlcipher.SQLiteDatabase) {
+        db.rawQuery("SELECT sqlcipher_export('" + ATTACH_NAME + "')", null).use { it.moveToFirst() }
     }
 
     /**

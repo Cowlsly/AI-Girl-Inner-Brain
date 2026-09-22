@@ -45,6 +45,18 @@
             </intent-filter>
         </activity>
 
+        <!--
+             The restart after a restore. Its own process so it can end the main one and start
+             it again; started only by the Backup screen, shows nothing, exits at once.
+             MaskanApplication.onCreate does nothing in the :phoenix process.
+        -->
+        <activity
+            android:name=".PhoenixActivity"
+            android:process=":phoenix"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"

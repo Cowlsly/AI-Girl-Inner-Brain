@@ -1,0 +1,9 @@
+Folders that know your project, a camera in the chat, questions about documents, a free model on your phone, and backup.
+
+- Folders carry instructions and memory into every chat inside them
+- Take a photo and ask: translate this, read it to me, what is this?
+- Ask about a PDF, Word or Excel file
+- No API key? A small model runs on your phone, offline
+- Back everything up to one encrypted file; restore it on a new phone
+- Your Arabic dialect governs every reply
+- Edit and resend, answer again

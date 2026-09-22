@@ -6,9 +6,15 @@ import app.maskan.chat.data.repository.openEncryptedPrefsStrict
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
+import java.io.IOException
 
 /**
  * Reading the app's preferences out for the archive, and (session 8) putting them back.
@@ -73,6 +79,55 @@ object BackupPrefs {
                 })
             }
         })
+    }
+
+    /**
+     * The restore side of [toJson]: every file in the JSON is rewritten whole - cleared, then
+     * every value put back with the type its tag says. A file the deny list names is never
+     * written, whatever an archive claims to carry. Returns the names written.
+     *
+     * [openEncrypted] is the caller's choice of how an encrypted file is opened for writing,
+     * because the right answer differs: the boot-time commit wants strict-or-replace, never the
+     * in-memory fallback that would swallow twelve API keys and report success.
+     */
+    fun apply(
+        context: Context,
+        json: JsonObject,
+        openEncrypted: (String) -> SharedPreferences
+    ): List<String> {
+        val files = json["files"] as? JsonObject ?: return emptyList()
+        val written = mutableListOf<String>()
+        for ((name, element) in files) {
+            if (name in BackupFormat.DENIED_PREFS) continue
+            val file = element as? JsonObject ?: continue
+            val encrypted = (file["encrypted"] as? JsonPrimitive)?.booleanOrNull ?: false
+            val values = file["values"] as? JsonObject ?: JsonObject(emptyMap())
+            val prefs = if (encrypted) openEncrypted(name)
+            else context.getSharedPreferences(name, Context.MODE_PRIVATE)
+            val editor = prefs.edit().clear()
+            for ((key, tagged) in values) {
+                val entry = tagged as? JsonObject ?: continue
+                val type = (entry["t"] as? JsonPrimitive)?.contentOrNull ?: continue
+                val value = entry["v"] ?: continue
+                val primitive = value as? JsonPrimitive
+                when (type) {
+                    "s" -> primitive?.contentOrNull?.let { editor.putString(key, it) }
+                    "b" -> primitive?.booleanOrNull?.let { editor.putBoolean(key, it) }
+                    "i" -> primitive?.intOrNull?.let { editor.putInt(key, it) }
+                    "l" -> primitive?.longOrNull?.let { editor.putLong(key, it) }
+                    "f" -> primitive?.floatOrNull?.let { editor.putFloat(key, it) }
+                    "ss" -> (value as? JsonArray)?.let { array ->
+                        editor.putStringSet(
+                            key,
+                            array.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.toSet()
+                        )
+                    }
+                }
+            }
+            if (!editor.commit()) throw IOException("could not write preferences " + name)
+            written += name
+        }
+        return written
     }
 
     private fun encode(value: Any?): JsonObject? = when (value) {

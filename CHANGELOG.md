@@ -2,6 +2,39 @@
 
 All notable changes to Maskan are documented here.
 
+## [2.6.0] — 2026-09-22
+
+### Added
+- **Folders as projects** — a folder now carries **Instructions** and a **Memory** file into every chat inside it, assembled into one system message per request. Edit the instructions and every chat in the folder obeys on its next message. A token meter shows what the folder costs; "remember this" (typed, or a button under any reply) appends a dated line to the memory and opens it, never a silent write; export and import as `.md`; an optional shared memory across every chat, off by default
+- **Take a photo** — a camera button in the message bar and in the + menu. The system camera is used, so no camera permission. Three chips under a photo: **Translate this**, **Read this to me** (spoken aloud as the reply lands), **What is this?** Follow-up questions keep the photo; Anthropic and Gemini included
+- **Ask about a document** — attach a PDF, Word (`.docx`) or Excel (`.xlsx`) file. A short file is pasted into the chat; a long one is read in parts with the cost shown first, resumed only when you tap Continue, and every question carries the notes plus the two most relevant passages. A PDF with no text is offered as its first three pages as pictures
+- **A model on your phone** — a new provider, **On this phone**, needs no API key: Qwen2.5 1.5B Instruct (Apache 2.0) is downloaded on request from Maskan's own GitHub release, checked against a pinned SHA-256, and runs offline in Arabic, Thai and English. Delete it from Settings and the space comes back. It is a basic model and the app says so
+- **Backup and restore** — Settings → Backup writes one encrypted file (AES-256-GCM, a password you choose) wherever you point the system picker: every chat, folder, document, setting **and every API key**. Restore reads the file's plaintext header first — made when, by which version, how many chats — shows it beside what this phone holds now, and asks for the password only after you confirm that everything on the phone will be replaced. A wrong password and a damaged file are two different answers. Generated pictures and clips stay on the phone they were made on
+- **Your dialect governs every Arabic reply**, not only translations — Egyptian, Levantine, Gulf, Maghrebi, Modern Standard, and now **Algerian**. Thai replies carry a Thai voice of their own
+- **Chat basics** — Answer again, Edit and resend, Delete message (a menu under each bubble); Send becomes Generate when a question has no answer yet; rename from the header or the list; automatic titles in the conversation's own language; change the preset mid-chat, or choose no style; an empty chat is discarded when you leave it
+- **"Image ready" / "Edit ready" notifications** when a drawing finishes with the app off screen, opening straight into the chat
+- Image and video model pickers inside the + menu
+- **Thai ↔ Arabic translation presets**, and each language's preset picker shows only the pairs that are for it
+
+### Changed
+- A server's 404 on a video job now reads as "the clip is gone", not "no internet"
+- The language setting decides the language of every reply; it no longer merely agrees with the question
+- Markdown tables mirror correctly in Arabic
+- Duplicate chat names are told apart rather than forbidden; "New Chat" is translated at display time
+- One new dependency, `pdfbox-android` (Apache 2.0), for PDF text; measured at +1.79 MB on arm64
+
+### Fixed
+- Arabic preset descriptions were sliced through the middle on denser screens: the line box was shorter than the glyph
+- A discarded chat stayed on the list after it was gone from the database
+- The Backup screen stated counts from when the app was opened, not from now
+- Hiding the speak button also hid the only way to stop speech that "Read this to me" had started
+- The chat list could show "Start your first private chat" over a full database on one cold start under memory pressure; guarded, not reproduced since
+- Onboarding buttons could clip their label at larger font sizes
+
+### Not in this release
+- Merging two phones' histories on restore, and scheduled backups — restore replaces, by design
+- On-device generation of images or video
+
 ## [2.5.0] — 2026-09-05
 
 ### Added

@@ -155,6 +155,10 @@ class MaskanApplication : Application() {
         }
     }
 
+    val backupRestorer by lazy {
+        app.maskan.chat.data.backup.BackupRestorer(this, backupReader)
+    }
+
     // ── On-device model ─────────────────────────────────
 
     /**
@@ -264,11 +268,38 @@ class MaskanApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // The :phoenix process exists to kill this one and start it again (PhoenixActivity).
+        // It must not open the database, apply a staged restore, or register anything.
+        if (isPhoenixProcess()) return
         trackForeground()
+        // Before Room, before any preference is read: a committed restore becomes the phone's
+        // data here, and nowhere else.
+        app.maskan.chat.data.backup.RestoreCommit.applyIfPending(this)
         initDatabaseEncryption()
         applySavedLocale()
         registerProviders()
         resumePendingVideos()
+        finishRestoreOnce()
+    }
+
+    private fun isPhoenixProcess(): Boolean {
+        val name = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) getProcessName()
+        else runCatching {
+            File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n')
+        }.getOrDefault("")
+        return name.endsWith(":phoenix")
+    }
+
+    /**
+     * The `.pre-restore` database is deleted only once the restored one has opened through Room
+     * - migrations included. Cheap when there is nothing to finish: one file-exists check.
+     */
+    private fun finishRestoreOnce() {
+        CoroutineScope(Dispatchers.IO).launch {
+            app.maskan.chat.data.backup.RestoreCommit.finishIfOpened(this@MaskanApplication) {
+                database.openHelper.readableDatabase.version
+            }
+        }
     }
 
     /**

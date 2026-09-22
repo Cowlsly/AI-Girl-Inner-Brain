@@ -1571,6 +1571,18 @@ private fun MessageBubble(
                             )
                         }
                     }
+                    if (!isVideo && message.imagePath != null && generatedImage == null) {
+                        // The row says a picture was generated here and the file is not on this
+                        // phone. After a restore that is every picture the app ever drew - they
+                        // stay behind by design - so the bubble says so rather than showing a
+                        // caption over nothing.
+                        Text(
+                            text = stringResource(R.string.restore_picture_missing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = if (message.content.isNotBlank()) 8.dp else 0.dp)
+                        )
+                    }
                     if (pendingKind != null) {
                         // A drawing or an edit is a single blocking request of a few minutes with
                         // nothing to stream. Say what is happening and for how long, so the empty
@@ -2268,10 +2280,11 @@ private fun VideoStatus(
 ) {
     when {
         // Only reached when the stored file could not be read back (the bubble draws the
-        // thumbnail itself whenever the bytes are there).
+        // thumbnail itself whenever the bytes are there) - which, after a restore, is every clip
+        // the app ever rendered.
         message.imagePath != null -> {
             Text(
-                text = stringResource(R.string.video_ready),
+                text = stringResource(R.string.restore_clip_missing),
                 style = MaterialTheme.typography.bodyMedium
             )
         }
