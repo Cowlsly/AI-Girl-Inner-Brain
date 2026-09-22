@@ -287,7 +287,7 @@ fun ConversationListScreen(
                     item { Spacer(modifier = Modifier.height(80.dp)) }
                 }
             }
-        } else if (conversations.isEmpty() && folders.isEmpty()) {
+        } else if (uiState.hasLoaded && conversations.isEmpty() && folders.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(paddingValues),
                 contentAlignment = Alignment.Center

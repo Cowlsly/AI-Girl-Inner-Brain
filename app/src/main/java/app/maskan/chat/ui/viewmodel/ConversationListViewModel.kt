@@ -20,6 +20,13 @@ import kotlinx.coroutines.launch
 data class ConversationListUiState(
     val conversations: List<ConversationEntity> = emptyList(),
     val folders: List<FolderEntity> = emptyList(),
+    /**
+     * Whether the database has been read at least once.
+     *
+     * Without it, "not read yet" and "empty" are the same state and the screen tells a user
+     * with two years of conversations that they have none. Nothing is drawn until this is true.
+     */
+    val hasLoaded: Boolean = false,
     val isLoading: Boolean = false,
     val selectedConversationId: Long? = null,
     /** First line of the first message in each chat, for rows that share a title. */
@@ -45,6 +52,10 @@ class ConversationListViewModel(
 
     init {
         sweepEmptyConversations()
+        // A plain query first, and the flows after. The direct read cannot be held up by Room's
+        // invalidation, and combine() below emits nothing at all until both of its sources have
+        // - so this is what guarantees the list has content to show.
+        refresh()
         loadData()
         observeSearch()
     }
@@ -77,7 +88,8 @@ class ConversationListViewModel(
             _uiState.value = _uiState.value.copy(
                 conversations = chatRepository.getAllConversations().first(),
                 folders = chatRepository.getAllFolders().first(),
-                firstLines = chatRepository.getFirstUserLines()
+                firstLines = chatRepository.getFirstUserLines(),
+                hasLoaded = true
             )
         }
     }
@@ -121,7 +133,8 @@ class ConversationListViewModel(
                 _uiState.value.copy(
                     conversations = conversations,
                     folders = folders,
-                    isLoading = false
+                    isLoading = false,
+                    hasLoaded = true
                 )
             }.collect { state ->
                 _uiState.value = state.copy(firstLines = chatRepository.getFirstUserLines())
