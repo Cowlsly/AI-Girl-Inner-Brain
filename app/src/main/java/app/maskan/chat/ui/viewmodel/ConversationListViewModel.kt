@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -51,6 +52,7 @@ class ConversationListViewModel(
     val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
 
     init {
+        observeDeletions()
         sweepEmptyConversations()
         // A plain query first, and the flows after. The direct read cannot be held up by Room's
         // invalidation, and combine() below emits nothing at all until both of its sources have
@@ -91,6 +93,18 @@ class ConversationListViewModel(
                 firstLines = chatRepository.getFirstUserLines(),
                 hasLoaded = true
             )
+        }
+    }
+
+    /**
+     * Re-read whenever a conversation is deleted anywhere in the app.
+     *
+     * `drop(1)` skips the value the flow already holds when this collector starts - `init`
+     * already calls refresh() and there is no reason to do it twice on launch.
+     */
+    private fun observeDeletions() {
+        viewModelScope.launch {
+            chatRepository.conversationsRevision.drop(1).collect { refresh() }
         }
     }
 

@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
@@ -55,6 +56,11 @@ fun BackupScreen(
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsState()
+
+    // Counted when the screen is shown, not when the ViewModel was built. The ViewModel outlives
+    // this screen, so init-time counts are whatever was true when the app was first opened - and
+    // this screen exists to say what is in the app NOW.
+    LaunchedEffect(Unit) { viewModel.refresh() }
 
     val createDocument = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(MIME_TYPE)

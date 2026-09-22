@@ -32,6 +32,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 
@@ -72,12 +75,24 @@ class ChatRepository(
         return conversationDao.insertConversation(conversation)
     }
 
+    /**
+     * Bumped after a conversation is deleted, for screens that cannot trust Room to tell them.
+     *
+     * Room's invalidation is unreliable under SQLCipher here - it is the reason `refresh()`
+     * exists - and a delete that does not re-emit leaves the list drawing a chat that is no
+     * longer in the database. Collected by the list, which re-reads when this changes. The
+     * bump happens AFTER the delete, so a collector cannot read too early.
+     */
+    private val _conversationsRevision = MutableStateFlow(0L)
+    val conversationsRevision: StateFlow<Long> = _conversationsRevision.asStateFlow()
+
     suspend fun deleteConversation(id: Long) {
         // Collect the image files FIRST: the foreign-key cascade wipes the message rows, and
         // after that there is nothing left to say which files belonged to this conversation.
         val images = messageDao.getImagePathsForConversation(id)
         conversationDao.deleteConversationById(id)
         if (images.isNotEmpty()) imageStore.delete(images)
+        _conversationsRevision.value = _conversationsRevision.value + 1
     }
 
     /**
