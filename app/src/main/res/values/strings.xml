@@ -125,7 +125,7 @@
     <string name="model_tag_free">💸 free</string>
     <string name="model_picker_count_fmt">Showing %1$d of %2$d</string>
     <string name="model_search_more_fmt">+%1$d more — keep typing to narrow</string>
-    <string name="default_dialect_label">Default translation dialect</string>
+    <string name="default_dialect_label">Arabic dialect</string>
     <string name="dialect_label">Dialect</string>
     <string name="instructions_title_provider">How to get a %1$s API Key</string>
 
@@ -443,4 +443,5 @@
     <string name="auto_title_hint">After the first reply, Maskan asks the provider you already chose for a short title, in the language of the conversation. One extra request, to that provider alone - Maskan has no server of its own.</string>
     <string name="speak_button_label">Show the speak button on replies</string>
     <string name="speak_button_hint">Off hides the button under every reply. “Read this to me” under a photo still works.</string>
+    <string name="default_dialect_hint">Used for every reply in Arabic, not only translations. Algerian needs a large model.</string>
 </resources>

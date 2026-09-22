@@ -125,7 +125,7 @@
     <string name="model_tag_free">💸 مجاني</string>
     <string name="model_picker_count_fmt">عرض %1$d من %2$d</string>
     <string name="model_search_more_fmt">+%1$d أخرى — تابع الكتابة لتضييق النتائج</string>
-    <string name="default_dialect_label">لهجة الترجمة الافتراضية</string>
+    <string name="default_dialect_label">اللهجة العربية</string>
     <string name="dialect_label">اللهجة</string>
     <string name="instructions_title_provider">كيف تحصل على مفتاح %1$s API</string>
 
@@ -443,4 +443,5 @@
     <string name="auto_title_hint">بعد أول إجابة، يطلب مسكن عنوانًا قصيرًا من المزوّد الذي اخترته أصلًا، بلغة المحادثة نفسها. طلب واحد إضافي، إلى ذلك المزوّد وحده — فليس لمسكن خادم خاص به.</string>
     <string name="speak_button_label">إظهار زر النطق على الإجابات</string>
     <string name="speak_button_hint">إيقافه يخفي الزر أسفل كل إجابة، ويبقى “اقرأ هذا لي” أسفل الصورة كما هو.</string>
+    <string name="default_dialect_hint">تُستعمل في كل ردّ بالعربية، لا في الترجمة وحدها. والجزائرية تحتاج موديل كبير.</string>
 </resources>

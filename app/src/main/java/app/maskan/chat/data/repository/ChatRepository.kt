@@ -4,6 +4,7 @@ import android.util.Base64
 import app.maskan.chat.BuildConfig
 import app.maskan.chat.data.local.ConversationDao
 import app.maskan.chat.data.local.ConversationEntity
+import app.maskan.chat.data.local.DialectVoice
 import app.maskan.chat.data.local.DocumentDao
 import app.maskan.chat.data.local.DocumentEntity
 import app.maskan.chat.data.local.FolderDao
@@ -1464,24 +1465,62 @@ class ChatRepository(
      * the ceiling leaves after the preset and the memory, and the whole is clamped again as a
      * backstop for the case where the memory alone is enormous.
      */
-    private fun assembleSystemText(preset: String, project: ProjectText): String {
+    private fun assembleSystemText(preset: String, voice: String, project: ProjectText): String {
         val memoryBlock = if (project.memory.isEmpty()) {
             ""
         } else {
             "### What you know about me\n" + project.memory
         }
-        val keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock)
+        // The voice is a global setting, one tap to restore. The instructions are words this
+        // user typed for this folder. When both cannot fit under the ceiling the voice is what
+        // gives way - Humam's call, session D - rather than silently truncating their text.
+        var voiceBlock = voice
+        var keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock) +
+            TokenEstimate.of(voiceBlock)
+        if (project.instructions.isNotEmpty() &&
+            MAX_SYSTEM_TOKENS - keptTokens < MIN_INSTRUCTION_TOKENS &&
+            voiceBlock.isNotEmpty()
+        ) {
+            voiceBlock = ""
+            keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock)
+        }
         val budget = (MAX_SYSTEM_TOKENS - keptTokens).coerceAtLeast(0)
         val instructionsBlock = if (project.instructions.isEmpty()) {
             ""
         } else {
             "### Project instructions\n" + TokenEstimate.clamp(project.instructions, budget)
         }
-        val assembled = listOf(preset, instructionsBlock, memoryBlock)
+        val assembled = listOf(preset, voiceBlock, instructionsBlock, memoryBlock)
             .filter { it.isNotEmpty() }
             .joinToString("\n\n")
         return TokenEstimate.clamp(assembled, MAX_SYSTEM_TOKENS)
     }
+
+    /**
+     * The voice for this request, from the dialect chosen in Settings.
+     *
+     * Keyed off the app's language for the same reason the preset text is (see applyPreset):
+     * it is the best guess the app has about which language the answer will be in, and it is
+     * the guess the rest of the app already makes. An empty string is the normal answer for
+     * an English install and for MSA, and it is what keeps the 2.5.0 request shape intact for
+     * everyone who has never touched this setting.
+     */
+    private fun dialectVoice(): String = when (effectiveLanguage()) {
+        "ar" -> DialectVoice.forDialect(preferenceRepository.getDefaultDialect())
+        else -> ""
+    }
+
+    /**
+     * The language this app is actually speaking, which is not the same question as
+     * [LocaleRepository.getLocale].
+     *
+     * That returns the user's EXPLICIT choice and defaults to "" - follow the system. Reading it
+     * alone answers "ar" only for someone who went into Settings and said so, and answers ""
+     * for an Arabic phone whose owner never needed to. Falling through to the running locale
+     * covers both, and covers the per-app language Android 13 offers from system settings.
+     */
+    private fun effectiveLanguage(): String =
+        localeRepository.getLocale().ifEmpty { java.util.Locale.getDefault().language }
 
     private suspend fun buildMessageList(
         conversation: ConversationEntity,
@@ -1512,6 +1551,7 @@ class ChatRepository(
         val recentMessages = nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
 
         val project = projectText(conversation)
+        val voice = dialectVoice()
 
         // The question the document evidence is chosen for is the turn being sent: the user row
         // is written before the request is built, so the last user message IS the question.
@@ -1522,7 +1562,7 @@ class ChatRepository(
         // A chat outside a folder, in a folder with both files empty, and with no document must
         // send EXACTLY what 2.5.0 sent. Not nearly - exactly: this is the line that keeps the
         // new features from quietly changing every existing conversation in the app.
-        if (project == null && documentText == null) {
+        if (project == null && documentText == null && voice.isEmpty()) {
             val plain = systemMessages + recentMessages
             logContext(conversation, plain, "2.5.0-shape")
             return plain
@@ -1538,7 +1578,12 @@ class ChatRepository(
         // folder's instructions and the file the user just attached are two different budgets,
         // and a long style guide must not be able to squeeze out the contract being asked about.
         val assembled = listOfNotNull(
-            if (project != null) assembleSystemText(preset, project) else preset.ifBlank { null },
+            if (project != null) {
+                assembleSystemText(preset, voice, project)
+            } else {
+                listOf(preset, voice).filter { it.isNotBlank() }
+                    .joinToString("\n\n").ifBlank { null }
+            },
             documentText
         ).joinToString("\n\n")
 
@@ -1639,6 +1684,7 @@ class ChatRepository(
                 " msgs=" + messages.size + " systems=" + system.size +
                 " imgs=" + messages.count { it.content is MessageContent.WithImage } +
                 " sysTokens=" + TokenEstimate.of(systemText) +
+                " voiceTokens=" + TokenEstimate.of(dialectVoice()) +
                 " roles=" + messages.joinToString(",") { it.role }
         )
         if (systemText.isNotEmpty()) {
@@ -1677,6 +1723,13 @@ class ChatRepository(
          * much. The editor's red meter warns long before this; this is the backstop.
          */
         const val MAX_SYSTEM_TOKENS = 6000
+
+        /**
+         * Below this much room left for a folder's instructions, the dialect voice is dropped
+         * instead. Instructions shorter than this are rare; the point is that a long voice can
+         * never be the reason a user's own project text arrives cut in half.
+         */
+        const val MIN_INSTRUCTION_TOKENS = 500
 
         /**
          * How many stored photos travel with a request. Every one of them is re-uploaded on

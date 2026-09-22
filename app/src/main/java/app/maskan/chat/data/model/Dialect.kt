@@ -41,6 +41,13 @@ enum class Dialect(
         nameAr = "مغاربي",
         nativeName = "مغاربي",
         description = "Use Darija (Moroccan/Algerian/Tunisian) but flag any vocabulary that may not be understood by Mashriq Arabic speakers. Prefer native Arabic or established Darija vocabulary over French loanwords where a natural equivalent exists."
+    ),
+    ALGERIAN(
+        id = "algerian",
+        nameEn = "Algerian",
+        nameAr = "جزائري",
+        nativeName = "الدارجة الجزائرية",
+        description = "Use Algerian Darja as it is actually spoken - not Modern Standard Arabic with a few Algerian words dropped into it, and not Moroccan. Keep the negation ma...sh, the first-person n- prefix, raa- for present state, taa for possession, and the everyday vocabulary (druk, bzaf, bsah, gaa, wash, shkun, kifash, win, alash). French borrowings are normal in Algerian speech but are written in Arabic letters, never Latin ones."
     );
 
     companion object {

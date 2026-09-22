@@ -125,7 +125,7 @@
     <string name="model_tag_free">💸 ฟรี</string>
     <string name="model_picker_count_fmt">แสดง %1$d จาก %2$d</string>
     <string name="model_search_more_fmt">+%1$d เพิ่มเติม — พิมพ์ต่อเพื่อจำกัดผลลัพธ์</string>
-    <string name="default_dialect_label">สำเนียงการแปลเริ่มต้น</string>
+    <string name="default_dialect_label">สำเนียงภาษาอาหรับ</string>
     <string name="dialect_label">สำเนียง</string>
     <string name="instructions_title_provider">วิธีรับ %1$s API Key</string>
 
@@ -443,4 +443,5 @@
     <string name="auto_title_hint">หลังคำตอบแรก มัสกันจะขอชื่อสั้นๆ จากผู้ให้บริการที่คุณเลือกไว้แล้ว ในภาษาเดียวกับบทสนทนา เป็นคำขอเพิ่มอีกหนึ่งครั้งไปยังผู้ให้บริการนั้นเท่านั้น มัสกันไม่มีเซิร์ฟเวอร์ของตัวเอง</string>
     <string name="speak_button_label">แสดงปุ่มอ่านออกเสียงบนคำตอบ</string>
     <string name="speak_button_hint">ปิดแล้วปุ่มใต้ทุกคำตอบจะหายไป แต่ “อ่านให้ฟังหน่อย” ใต้รูปยังใช้ได้</string>
+    <string name="default_dialect_hint">ใช้กับทุกคำตอบภาษาอาหรับ ไม่ใช่แค่การแปล สำเนียงแอลจีเรียต้องใช้โมเดลขนาดใหญ่</string>
 </resources>

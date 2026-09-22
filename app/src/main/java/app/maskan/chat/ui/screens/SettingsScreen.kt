@@ -937,10 +937,18 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Default Translation Dialect
+            // The dialect. Since session D it governs every Arabic reply, not just the
+            // translator preset, so the hint underneath is doing real work: it is the only
+            // place the app says so, and the only place it admits Algerian wants a big model.
             Text(
                 text = stringResource(R.string.default_dialect_label),
                 style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.default_dialect_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
 
