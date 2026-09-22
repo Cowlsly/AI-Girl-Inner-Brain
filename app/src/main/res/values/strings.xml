@@ -17,7 +17,6 @@
     <string name="search_no_results">No conversations found</string>
 
     <!-- Chat screen -->
-    <string name="chat_screen_title">Chat</string>
     <string name="empty_chat">Start a conversation\nType a message below.</string>
     <string name="message_placeholder">Type a message…</string>
     <string name="send_button">Send</string>
@@ -422,4 +421,26 @@
     <string name="document_meta_tokens">~%1$d tokens</string>
     <string name="document_show_notes">Show notes</string>
     <string name="document_hide_notes">Hide notes</string>
+    <string name="new_chat_title">New Chat</string>
+    <string name="folder_chat_count_desc">Chats: %d</string>
+    <string name="rename_chat">Rename chat</string>
+    <string name="chat_name_hint">Chat name</string>
+    <string name="preset_custom_label">Your own style</string>
+    <string name="preset_none_label">No style</string>
+    <string name="preset_none_action">Start without a style</string>
+    <string name="change_preset">Change the style</string>
+    <string name="message_actions">Message options</string>
+    <string name="regenerate_reply">Answer again</string>
+    <string name="edit_and_resend">Edit and resend</string>
+    <string name="delete_message">Delete message</string>
+    <string name="delete_message_title">Delete this message?</string>
+    <string name="delete_message_body">It leaves the conversation for good.</string>
+    <string name="delete_message_body_with_followers">Everything said after it goes with it. Messages that will go: %d</string>
+    <string name="edit_drops_followers">Sending this removes everything said after it. Messages that will go: %d</string>
+    <string name="generate_reply">Answer this</string>
+    <string name="settings_chat_section">Chat</string>
+    <string name="auto_title_label">Name chats automatically</string>
+    <string name="auto_title_hint">After the first reply, Maskan asks the provider you already chose for a short title, in the language of the conversation. One extra request, to that provider alone - Maskan has no server of its own.</string>
+    <string name="speak_button_label">Show the speak button on replies</string>
+    <string name="speak_button_hint">Off hides the button under every reply. “Read this to me” under a photo still works.</string>
 </resources>

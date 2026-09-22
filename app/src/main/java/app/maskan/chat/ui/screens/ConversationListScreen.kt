@@ -151,11 +151,26 @@ fun ConversationListScreen(
     var folderToDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
     var folderToRecolor by remember { mutableStateOf<FolderEntity?>(null) }
     var conversationToMove by remember { mutableStateOf<ConversationEntity?>(null) }
+    var conversationToRename by remember { mutableStateOf<ConversationEntity?>(null) }
     val expandedFolders = remember { mutableStateMapOf<Long?, Boolean>() }
 
     val folders = uiState.folders
     val conversations = uiState.conversations
     val conversationsByFolder = conversations.groupBy { it.folderId }
+
+    // A name another visible row also carries. Duplicates are allowed - two trips to Petra are
+    // both called Petra - so the answer is not to forbid them but to stop drawing them
+    // identically: these rows also show what was first asked in them.
+    val duplicateTitles = conversations.groupingBy { it.title }.eachCount()
+        .filterValues { it > 1 }.keys
+    val duplicateSearchTitles = searchResults.groupingBy { it.title }.eachCount()
+        .filterValues { it > 1 }.keys
+    val duplicateFolderNames = folders.groupingBy { it.name }.eachCount()
+        .filterValues { it > 1 }.keys
+
+    // Titles change while this screen is off stage: an automatic title lands a second after the
+    // first reply, on a chat the user is still reading. Coming back is when to re-read.
+    LaunchedEffect(Unit) { viewModel.refresh() }
     val folderToDelete = folderToDeleteId?.let { id -> folders.find { it.id == id } }
 
     Scaffold(
@@ -263,7 +278,10 @@ fun ConversationListScreen(
                             conversation = conversation,
                             onClick = { onNavigateToChat(conversation.id) },
                             onDelete = { viewModel.deleteConversation(conversation.id) },
-                            onMoveToFolder = { conversationToMove = conversation }
+                            onMoveToFolder = { conversationToMove = conversation },
+                            onRename = { conversationToRename = conversation },
+                            duplicateName = conversation.title in duplicateSearchTitles,
+                            firstLine = uiState.firstLines[conversation.id]
                         )
                     }
                     item { Spacer(modifier = Modifier.height(80.dp)) }
@@ -338,7 +356,10 @@ fun ConversationListScreen(
                                 conversation = conversation,
                                 onClick = { onNavigateToChat(conversation.id) },
                                 onDelete = { viewModel.deleteConversation(conversation.id) },
-                                onMoveToFolder = { conversationToMove = conversation }
+                                onMoveToFolder = { conversationToMove = conversation },
+                                onRename = { conversationToRename = conversation },
+                                duplicateName = conversation.title in duplicateTitles,
+                                firstLine = uiState.firstLines[conversation.id]
                             )
                         }
                     }
@@ -360,7 +381,12 @@ fun ConversationListScreen(
                                 onToggle = { expandedFolders[folder.id] = !folderExpanded },
                                 onLongClick = { showMenu = true },
                                 projectTokens = TokenEstimate.of(folder.instructions) +
-                                    TokenEstimate.of(folder.memory)
+                                    TokenEstimate.of(folder.memory),
+                                chatCount = if (folder.name in duplicateFolderNames) {
+                                    folderConvs.size
+                                } else {
+                                    null
+                                }
                             )
                             DropdownMenu(
                                 expanded = showMenu,
@@ -397,7 +423,10 @@ fun ConversationListScreen(
                                     conversation = conversation,
                                     onClick = { onNavigateToChat(conversation.id) },
                                     onDelete = { viewModel.deleteConversation(conversation.id) },
-                                    onMoveToFolder = { conversationToMove = conversation }
+                                    onMoveToFolder = { conversationToMove = conversation },
+                                    onRename = { conversationToRename = conversation },
+                                    duplicateName = conversation.title in duplicateTitles,
+                                    firstLine = uiState.firstLines[conversation.id]
                                 )
                             }
                         }
@@ -410,6 +439,19 @@ fun ConversationListScreen(
     }
 
     // ── Dialogs & Sheets ──────────────────────────────────────────────
+
+    conversationToRename?.let { conversation ->
+        RenameDialog(
+            currentName = displayTitle(conversation.title),
+            titleRes = R.string.rename_chat,
+            labelRes = R.string.chat_name_hint,
+            onDismiss = { conversationToRename = null },
+            onRename = { newName ->
+                viewModel.renameConversation(conversation.id, newName)
+                conversationToRename = null
+            }
+        )
+    }
 
     if (showNewFolderDialog) {
         CreateFolderDialog(

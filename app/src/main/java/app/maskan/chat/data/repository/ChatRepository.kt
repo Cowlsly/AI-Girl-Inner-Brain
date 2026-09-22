@@ -58,7 +58,7 @@ class ChatRepository(
         conversationDao.getConversationById(id)
 
     suspend fun createConversation(
-        title: String = "New Chat",
+        title: String = DEFAULT_TITLE,
         providerId: String = ProviderRegistry.getDefaultProvider().id,
         modelId: String? = null
     ): Long {
@@ -110,6 +110,18 @@ class ChatRepository(
             .distinctBy { it.id }
             .sortedByDescending { it.createdAt }
     }
+
+    /**
+     * The first line the user wrote in each conversation, keyed by conversation id.
+     *
+     * One query for the whole list. Only the first LINE: a message can be a pasted contract,
+     * and what belongs under a title is the opening of the question, not the question.
+     */
+    suspend fun getFirstUserLines(): Map<Long, String> =
+        messageDao.getFirstUserMessages().associate { message ->
+            message.conversationId to
+                message.content.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        }
 
     // ── Folders ────────────────────────────────────────────────────────
 
@@ -509,11 +521,8 @@ class ChatRepository(
 
             saveMessage(conversationId, "assistant", assistantContent)
 
-            if (conversation.title == "New Chat") {
-                val title = userContent.take(50).let {
-                    if (it.length == 50) "$it..." else it
-                }
-                conversationDao.updateConversationTitle(conversationId, title)
+            if (conversation.title == DEFAULT_TITLE) {
+                conversationDao.updateConversationTitle(conversationId, fallbackTitle(userContent))
             }
 
             Result.success(ChatCompletionResponse(
@@ -532,6 +541,10 @@ class ChatRepository(
 
     private fun resolvePreset(conversation: ConversationEntity) =
         when (conversation.systemPromptId) {
+            // "No preset at all" is a CHOICE, stored as an id, and it is not the same thing as
+            // null - null still means "the user has not been asked yet", which is what raises
+            // the picker. Both resolve to no preset here; only one of them shows a screen.
+            PRESET_NONE -> null
             "en_to_ar" -> {
                 val dialect = conversation.dialectId?.let { Dialect.fromId(it) } ?: Dialect.MSA
                 Presets.enToArPreset(dialect)
@@ -582,11 +595,8 @@ class ChatRepository(
 
         streamAssistantReply(conversation, model, imageData, imageMimeType)
 
-        if (conversation.title == "New Chat") {
-            val title = userContent.take(50).let {
-                if (it.length == 50) "$it..." else it
-            }
-            conversationDao.updateConversationTitle(conversationId, title)
+        if (conversation.title == DEFAULT_TITLE) {
+            conversationDao.updateConversationTitle(conversationId, fallbackTitle(userContent))
         }
 
         emit(StreamEvent.Done)
@@ -763,9 +773,8 @@ class ChatRepository(
             throw e
         }
 
-        if (conversation.title == "New Chat") {
-            val title = prompt.take(50).let { if (it.length == 50) "$it..." else it }
-            conversationDao.updateConversationTitle(conversationId, title)
+        if (conversation.title == DEFAULT_TITLE) {
+            conversationDao.updateConversationTitle(conversationId, fallbackTitle(prompt))
         }
 
         emit(StreamEvent.Done)
@@ -835,9 +844,8 @@ class ChatRepository(
         videoJobs.enqueue(assistantMessageId, conversationId, providerId)
         emit(StreamEvent.VideoQueued(assistantEntity.copy(id = assistantMessageId)))
 
-        if (conversation.title == "New Chat") {
-            val title = prompt.take(50).let { if (it.length == 50) "$it..." else it }
-            conversationDao.updateConversationTitle(conversationId, title)
+        if (conversation.title == DEFAULT_TITLE) {
+            conversationDao.updateConversationTitle(conversationId, fallbackTitle(prompt))
         }
 
         emit(StreamEvent.Done)
@@ -906,9 +914,8 @@ class ChatRepository(
             throw e
         }
 
-        if (conversation.title == "New Chat") {
-            val title = prompt.take(50).let { if (it.length == 50) "$it..." else it }
-            conversationDao.updateConversationTitle(conversationId, title)
+        if (conversation.title == DEFAULT_TITLE) {
+            conversationDao.updateConversationTitle(conversationId, fallbackTitle(prompt))
         }
         emit(StreamEvent.Done)
     }
@@ -1181,6 +1188,235 @@ class ChatRepository(
         }
     }
 
+    // ── The chat's own system prompt ────────────────────────────────
+
+    /**
+     * Point this chat at a different system prompt - before it starts, or half way through.
+     *
+     * The chat's single system ROW is rewritten in place. It is tempting instead to leave the
+     * row alone and resolve the current preset on every request, and that is the wrong trade
+     * twice over: buildMessageList would have to change, which is the one function that
+     * guarantees a chat with no folder and no document still sends exactly what 2.5.0 sent; and
+     * a chat started in Arabic would silently re-language itself the day the user switched the
+     * app to English, because the preset text is chosen by locale at write time.
+     *
+     * Rewriting is not falsifying history: a system row is filtered out of the transcript
+     * everywhere it is shown. The row is the record of what this chat IS set up as, and that is
+     * precisely what has just changed.
+     */
+    suspend fun applyPreset(
+        conversationId: Long,
+        presetId: String,
+        dialectId: String? = null,
+        /** The user's own text, for [PRESET_CUSTOM]. Ignored for every other id. */
+        customText: String? = null
+    ) {
+        conversationDao.updateSystemPrompt(conversationId, presetId, dialectId)
+        val conversation = conversationDao.getConversationById(conversationId) ?: return
+        val text = when (presetId) {
+            PRESET_NONE -> ""
+            PRESET_CUSTOM -> customText.orEmpty().trim()
+            else -> {
+                val preset = resolvePreset(conversation)
+                val isArabic = localeRepository.getLocale() == "ar"
+                preset?.let { if (isArabic) it.systemPromptAr else it.systemPromptEn }.orEmpty()
+            }
+        }
+        val existing = messageDao.getMessagesForConversationOnce(conversationId)
+            .firstOrNull { it.role == "system" }
+        when {
+            text.isBlank() && existing != null -> messageDao.deleteMessageById(existing.id)
+            text.isBlank() -> Unit
+            existing != null -> messageDao.updateMessageContent(existing.id, text)
+            else -> saveMessage(conversationId, "system", text)
+        }
+    }
+
+    // ── Chats nobody used ───────────────────────────────────────
+
+    /**
+     * Throw this conversation away if nothing was ever said in it.
+     *
+     * Called when the user leaves the screen. The row has to exist before the screen opens - the
+     * preset, the attachments and the documents are all keyed by an id - so "do not save an
+     * empty chat" can only mean "discard it on the way out". A preset chosen or a prompt written
+     * counts as nothing: those are settings for a conversation that never happened. A document
+     * read into it does NOT count as nothing - that is requests the user has already paid for.
+     */
+    suspend fun discardIfEmpty(conversationId: Long) {
+        if (messageDao.countUserMessages(conversationId) > 0) return
+        if (documentDao.getForConversationOnce(conversationId).isNotEmpty()) return
+        val conversation = conversationDao.getConversationById(conversationId) ?: return
+        if (conversation.title != DEFAULT_TITLE) return
+        deleteConversation(conversationId)
+    }
+
+    /**
+     * The same idea applied once to the rows already in the database, for the installs carrying
+     * a dozen "New Chat" rows out of 2.5. Narrower than [discardIfEmpty] on purpose - see the
+     * DAO query's three conditions - so that nothing anyone ever touched can be caught by it.
+     */
+    suspend fun sweepEmptyConversations(): Int {
+        val ids = conversationDao.getDiscardableConversationIds(DEFAULT_TITLE)
+        ids.forEach { conversationDao.deleteConversationById(it) }
+        return ids.size
+    }
+
+    // ── Editing a conversation's own history ─────────────────────────
+
+    /** How many rows sit after [messageId]. The number the confirm dialog says out loud. */
+    suspend fun countMessagesAfter(conversationId: Long, messageId: Long): Int {
+        val message = messageDao.getMessageById(messageId) ?: return 0
+        return messageDao.getMessagesAfter(conversationId, message.timestamp, messageId).size
+    }
+
+    /**
+     * Delete [messageId], and everything after it when [alsoAfter].
+     *
+     * The rows are READ before they are deleted, twice over: a generated picture is a file next
+     * to the database and nothing after the DELETE says which file belonged to which row, and a
+     * document was read into one particular turn - when that turn goes, the file it was attached
+     * to goes with it, or the app keeps paying to send a file whose card is no longer anywhere
+     * on screen.
+     */
+    suspend fun deleteMessage(conversationId: Long, messageId: Long, alsoAfter: Boolean) {
+        val message = messageDao.getMessageById(messageId) ?: return
+        val after = if (alsoAfter) {
+            messageDao.getMessagesAfter(conversationId, message.timestamp, messageId)
+        } else {
+            emptyList()
+        }
+        val doomed = after + message
+        val images = doomed.mapNotNull { it.imagePath }
+        val doomedIds = doomed.map { it.id }.toSet()
+        val documents = documentDao.getForConversationOnce(conversationId)
+            .filter { it.attachedMessageId in doomedIds }
+
+        if (alsoAfter) messageDao.deleteMessagesAfter(conversationId, message.timestamp, messageId)
+        messageDao.deleteMessageById(messageId)
+        documents.forEach { documentDao.delete(it.id) }
+        if (images.isNotEmpty()) imageStore.delete(images)
+    }
+
+    /**
+     * Replace what the user said, and drop the conversation that grew out of the old wording.
+     *
+     * The row keeps its id and its attachment, so a photo asked about in different words is
+     * still the same photo and is not uploaded again. Everything after it goes: a reply that
+     * answered the old text, and every turn built on that reply, would be a transcript of a
+     * conversation that never took place.
+     */
+    suspend fun editUserMessage(conversationId: Long, messageId: Long, newText: String) {
+        val message = messageDao.getMessageById(messageId) ?: return
+        val after = messageDao.getMessagesAfter(conversationId, message.timestamp, messageId)
+        val images = after.mapNotNull { it.imagePath }
+        val afterIds = after.map { it.id }.toSet()
+        val documents = documentDao.getForConversationOnce(conversationId)
+            .filter { it.attachedMessageId in afterIds }
+
+        messageDao.deleteMessagesAfter(conversationId, message.timestamp, messageId)
+        messageDao.updateMessageContent(messageId, newText)
+        documents.forEach { documentDao.delete(it.id) }
+        if (images.isNotEmpty()) imageStore.delete(images)
+    }
+
+    // ── Naming a chat ─────────────────────────────────────────
+
+    /** What a chat is called when nothing has named it: the first line of the first message. */
+    private fun fallbackTitle(text: String): String =
+        text.take(50).let { if (it.length == 50) "$it..." else it }
+
+    /**
+     * Ask the provider that just answered to name this chat, in the language it is being held in.
+     *
+     * ONE extra request, on the model the user already chose, carrying the first exchange and
+     * nothing else - no folder instructions, no document notes, no later turns. The language is
+     * never named: the model is told to answer in the language of what it is shown, which is how
+     * an Arabic chat gets an Arabic title without the app having to work out which language a
+     * conversation is in.
+     *
+     * Silent in every failure - no key, airplane mode, a refusal, an empty answer, a model that
+     * writes a paragraph instead of a title. The chat keeps the name it had. A title that failed
+     * to improve is not worth interrupting anybody for, and this runs when the reply has already
+     * landed and the user is reading it.
+     */
+    suspend fun generateTitle(conversationId: Long) {
+        try {
+            if (!preferenceRepository.isAutoTitleEnabled()) return
+            val conversation = conversationDao.getConversationById(conversationId) ?: return
+
+            val rows = messageDao.getMessagesForConversationOnce(conversationId)
+                .filter { it.role != "system" }
+            val question = rows.firstOrNull { it.role == "user" }?.content?.trim().orEmpty()
+            val answer = rows.firstOrNull { it.role == "assistant" }?.content?.trim().orEmpty()
+            if (question.isEmpty() || answer.isEmpty()) return
+
+            // Never over a name the user chose. The only two titles this may replace are the
+            // one a chat is born with and the one the first message derived - anything else is
+            // a rename, and a rename outranks us.
+            val current = conversation.title
+            if (current != DEFAULT_TITLE && current != fallbackTitle(question)) return
+
+            // A failure leaves the title alone, which means the next turn will try again - and
+            // that is wanted exactly twice. A chat started in airplane mode gets its name when
+            // the network comes back; a model that answers a title request with a paragraph
+            // every time would otherwise cost an extra request on every message the chat ever
+            // carries. Three attempts, then the chat keeps the name it has.
+            if (rows.count { it.role == "user" } > AUTO_TITLE_LAST_TURN) return
+
+            val provider = ProviderRegistry.getProvider(conversation.providerId) ?: return
+            if (!provider.canAutoTitle) return
+            val apiKey = keyRepository.getApiKey(conversation.providerId) ?: ""
+            if (apiKey.isBlank() && !provider.supportsCustomBaseUrl) return
+            val model = conversation.modelId
+                ?: keyRepository.getSelectedModel(conversation.providerId)
+                ?: provider.defaultModel
+
+            val instruction = Message(
+                role = "system",
+                text = "You name conversations. Read the exchange and reply with a title of " +
+                    "3 to 5 words for it, written in THE SAME LANGUAGE as the exchange. Reply " +
+                    "with the title alone: no quotation marks, no full stop at the end, no " +
+                    "explanation, no translation, nothing else."
+            )
+            // Capped because a title is worth a few hundred tokens of context, not a whole
+            // contract: the subject of a conversation is visible in its opening lines.
+            val exchange = Message(
+                role = "user",
+                text = question.take(600) + "\n\n" + answer.take(600)
+            )
+
+            val raw = provider.sendMessage(
+                apiKey,
+                model,
+                listOf(instruction, exchange),
+                keyRepository.getBaseUrl(conversation.providerId)
+            )
+            val title = cleanTitle(raw) ?: return
+            conversationDao.updateConversationTitle(conversationId, title)
+        } catch (_: Exception) {
+            // Deliberately silent. See the doc comment.
+        }
+    }
+
+    /**
+     * The first line of the answer, with the decorations models add to a title stripped off, or
+     * null if what came back is not a title at all.
+     *
+     * The length test is the one that matters: a model that ignored the instruction answers with
+     * a sentence or a paragraph, and a chat list full of paragraphs is worse than a chat list
+     * full of "New Chat". Quotation marks are stripped in all three scripts' shapes because
+     * asking a model not to quote a title works about four times in five.
+     */
+    private fun cleanTitle(raw: String): String? {
+        var line = raw.lines().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return null
+        line = line.trim('"', '\'', '\u201c', '\u201d', '\u2018', '\u2019', '\u00ab', '\u00bb')
+            .trimEnd('.', '\u060c', ':', '\u061b')
+            .trim()
+        if (line.isEmpty() || line.length > 60) return null
+        return line
+    }
+
     /**
      * What this conversation's folder contributes to the system role, or null when it
      * contributes nothing.
@@ -1411,6 +1647,27 @@ class ChatRepository(
     }
 
     companion object {
+        /**
+         * The title a chat is born with, stored in English in every install.
+         *
+         * It is a SENTINEL as much as a name - "has anything named this chat yet" is a string
+         * comparison against it in half a dozen places - and a stored value that changed with
+         * the app's language would stop matching the moment the user switched. It is translated
+         * where it is SHOWN instead; see displayTitle() in the UI.
+         */
+        const val DEFAULT_TITLE = "New Chat"
+
+        /**
+         * The last turn an automatic title may be attempted on. One is the ordinary case (the
+         * first exchange); the extra two are the retries a failure gets before we stop paying
+         * for them.
+         */
+        private const val AUTO_TITLE_LAST_TURN = 3
+
+        /** The preset id meaning "this chat has no system prompt and that is deliberate". */
+        const val PRESET_NONE = "none"
+        const val PRESET_CUSTOM = "custom"
+
         const val MAX_CONTEXT_MESSAGES = 50
 
         /**

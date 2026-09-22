@@ -14,13 +14,16 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class ConversationListUiState(
     val conversations: List<ConversationEntity> = emptyList(),
     val folders: List<FolderEntity> = emptyList(),
     val isLoading: Boolean = false,
-    val selectedConversationId: Long? = null
+    val selectedConversationId: Long? = null,
+    /** First line of the first message in each chat, for rows that share a title. */
+    val firstLines: Map<Long, String> = emptyMap()
 )
 
 class ConversationListViewModel(
@@ -41,8 +44,42 @@ class ConversationListViewModel(
     val isSearchActive: StateFlow<Boolean> = _isSearchActive.asStateFlow()
 
     init {
+        sweepEmptyConversations()
         loadData()
         observeSearch()
+    }
+
+    /**
+     * Throw away the "New Chat" rows nobody ever used, once per process.
+     *
+     * Going forward the chat screen discards an empty chat as the user leaves it, so this is
+     * for what is already in the database - an install upgrading from 2.5 can be carrying a
+     * dozen of them. Deliberately the narrow rule: no messages at all, no document, and still
+     * the default title. See the DAO query.
+     */
+    private fun sweepEmptyConversations() {
+        viewModelScope.launch {
+            val removed = chatRepository.sweepEmptyConversations()
+            if (removed > 0) refresh()
+        }
+    }
+
+    /**
+     * Re-read the list once.
+     *
+     * Room's invalidation is not reliable under SQLCipher here (the same reason the chat screen
+     * drives itself from in-memory state), and an automatic title lands on a row while this
+     * screen is off stage. Called when the list comes back to the front, which is exactly when
+     * a title may have changed underneath it.
+     */
+    fun refresh() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                conversations = chatRepository.getAllConversations().first(),
+                folders = chatRepository.getAllFolders().first(),
+                firstLines = chatRepository.getFirstUserLines()
+            )
+        }
     }
 
     @OptIn(FlowPreview::class)
@@ -87,7 +124,7 @@ class ConversationListViewModel(
                     isLoading = false
                 )
             }.collect { state ->
-                _uiState.value = state
+                _uiState.value = state.copy(firstLines = chatRepository.getFirstUserLines())
             }
         }
     }
@@ -106,6 +143,15 @@ class ConversationListViewModel(
                 modelId = defaultModel
             )
             onCreated(id)
+        }
+    }
+
+    fun renameConversation(id: Long, newTitle: String) {
+        val trimmed = newTitle.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            chatRepository.updateConversationTitle(id, trimmed)
+            refresh()
         }
     }
 

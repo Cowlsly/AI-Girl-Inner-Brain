@@ -17,7 +17,6 @@
     <string name="search_no_results">ไม่พบการสนทนา</string>
 
     <!-- Chat screen -->
-    <string name="chat_screen_title">แชท</string>
     <string name="empty_chat">เริ่มบทสนทนา\nพิมพ์ข้อความด้านล่าง</string>
     <string name="message_placeholder">พิมพ์ข้อความ…</string>
     <string name="send_button">ส่ง</string>
@@ -422,4 +421,26 @@
     <string name="document_meta_tokens">ประมาณ %1$d โทเค็น</string>
     <string name="document_show_notes">แสดงบันทึกย่อ</string>
     <string name="document_hide_notes">ซ่อนบันทึกย่อ</string>
+    <string name="new_chat_title">แชทใหม่</string>
+    <string name="folder_chat_count_desc">แชท: %d</string>
+    <string name="rename_chat">เปลี่ยนชื่อแชท</string>
+    <string name="chat_name_hint">ชื่อแชท</string>
+    <string name="preset_custom_label">สไตล์ของคุณ</string>
+    <string name="preset_none_label">ไม่มีสไตล์</string>
+    <string name="preset_none_action">เริ่มโดยไม่ใช้สไตล์</string>
+    <string name="change_preset">เปลี่ยนสไตล์</string>
+    <string name="message_actions">ตัวเลือกข้อความ</string>
+    <string name="regenerate_reply">ตอบใหม่อีกครั้ง</string>
+    <string name="edit_and_resend">แก้ไขแล้วส่งใหม่</string>
+    <string name="delete_message">ลบข้อความ</string>
+    <string name="delete_message_title">ลบข้อความนี้หรือไม่</string>
+    <string name="delete_message_body">ข้อความจะหายไปจากบทสนทนาอย่างถาวร</string>
+    <string name="delete_message_body_with_followers">ทุกข้อความหลังจากนี้จะหายไปด้วย จำนวนข้อความที่จะหายไป: %d</string>
+    <string name="edit_drops_followers">การส่งจะลบทุกข้อความหลังจากนี้ จำนวนข้อความที่จะหายไป: %d</string>
+    <string name="generate_reply">ตอบข้อความนี้</string>
+    <string name="settings_chat_section">แชท</string>
+    <string name="auto_title_label">ตั้งชื่อแชทอัตโนมัติ</string>
+    <string name="auto_title_hint">หลังคำตอบแรก มัสกันจะขอชื่อสั้นๆ จากผู้ให้บริการที่คุณเลือกไว้แล้ว ในภาษาเดียวกับบทสนทนา เป็นคำขอเพิ่มอีกหนึ่งครั้งไปยังผู้ให้บริการนั้นเท่านั้น มัสกันไม่มีเซิร์ฟเวอร์ของตัวเอง</string>
+    <string name="speak_button_label">แสดงปุ่มอ่านออกเสียงบนคำตอบ</string>
+    <string name="speak_button_hint">ปิดแล้วปุ่มใต้ทุกคำตอบจะหายไป แต่ “อ่านให้ฟังหน่อย” ใต้รูปยังใช้ได้</string>
 </resources>

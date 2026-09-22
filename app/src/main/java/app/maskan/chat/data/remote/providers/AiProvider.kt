@@ -30,6 +30,18 @@ interface AiProvider {
      * which ModelFilter.editModelIn finds by name instead.
      */
     val supportsImageEditing: Boolean get() = false
+    /**
+     * Whether this provider may be asked a question the USER did not ask - today only the
+     * automatic chat title.
+     *
+     * True everywhere a request is a network call someone is already paying for. It exists for
+     * the on-device provider arriving in session 5: loading a model into memory costs seconds
+     * and battery, and doing that to name a chat - when the user may not even be in the app any
+     * more - is not a trade anyone would accept. That provider answers false unless its model
+     * is already loaded.
+     */
+    val canAutoTitle: Boolean get() = true
+
     val isLocal: Boolean get() = false
     val availableModels: List<String>
     val defaultModel: String

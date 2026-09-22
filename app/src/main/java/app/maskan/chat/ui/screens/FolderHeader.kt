@@ -42,7 +42,13 @@ internal fun FolderHeader(
      * On the row rather than only in the editor because this is the number that explains why the
      * chats in one folder feel slower and cost more than the chats in another.
      */
-    projectTokens: Int = 0
+    projectTokens: Int = 0,
+    /**
+     * How many chats this folder holds - passed ONLY when another folder shares its name.
+     * Same rule as a duplicate chat title: the app does not forbid two folders called "Petra",
+     * it refuses to draw them identically.
+     */
+    chatCount: Int? = null
 ) {
     Row(
         modifier = Modifier
@@ -75,6 +81,10 @@ internal fun FolderHeader(
         if (projectTokens > 0) {
             Spacer(modifier = Modifier.width(8.dp))
             TokenCount(tokens = projectTokens)
+        }
+        if (chatCount != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            ChatCount(count = chatCount)
         }
     }
 }

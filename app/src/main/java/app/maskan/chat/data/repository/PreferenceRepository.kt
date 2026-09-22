@@ -99,6 +99,49 @@ class PreferenceRepository(context: Context) {
         }.apply()
     }
 
+    // ── The custom system prompt ─────────────────────────────────
+    //
+    // ONE prompt, the last one written in "Create your own", so the next chat starts from it
+    // instead of an empty box. A named library of custom presets is a screen of its own and is
+    // not this release. In the ENCRYPTED preferences for the same reason the memory file is:
+    // it is the user's own words about how they want to be answered.
+
+    /** Null, never an empty string. */
+    fun getCustomPrompt(): String? =
+        sharedPreferences.getString(KEY_CUSTOM_PROMPT, null)?.takeIf { it.isNotBlank() }
+
+    fun setCustomPrompt(text: String?) {
+        val trimmed = text?.takeIf { it.isNotBlank() }
+        sharedPreferences.edit().apply {
+            if (trimmed == null) remove(KEY_CUSTOM_PROMPT) else putString(KEY_CUSTOM_PROMPT, trimmed)
+        }.apply()
+    }
+
+    // ── Chat behaviour switches ────────────────────────────────────
+
+    /**
+     * Whether a finished first exchange may cost ONE extra request to name the chat. On by
+     * default; off means exactly what 2.5.0 did - the first 50 characters of the first message.
+     */
+    fun isAutoTitleEnabled(): Boolean =
+        plainPreferences.getBoolean(KEY_AUTO_TITLE, true)
+
+    fun setAutoTitleEnabled(enabled: Boolean) {
+        plainPreferences.edit().putBoolean(KEY_AUTO_TITLE, enabled).apply()
+    }
+
+    /**
+     * Whether a reply carries a speak button in its footer. Default true, i.e. unchanged from
+     * 2.5.0. Only the BUTTON: "Read this to me" under a photo is the user asking for speech by
+     * name and is not governed by this.
+     */
+    fun isSpeakButtonShown(): Boolean =
+        plainPreferences.getBoolean(KEY_SPEAK_BUTTON, true)
+
+    fun setSpeakButtonShown(shown: Boolean) {
+        plainPreferences.edit().putBoolean(KEY_SPEAK_BUTTON, shown).apply()
+    }
+
     // Model lists fetched from a provider's /models endpoint. Cached in the PLAIN prefs on
     // purpose: model ids are public catalogue data, not secrets, and keeping them out of the
     // encrypted file avoids bloating it. The timestamp drives the staleness check that triggers
@@ -259,5 +302,8 @@ class PreferenceRepository(context: Context) {
         // on is encrypted with the rest of the user's own words.
         private const val KEY_GLOBAL_MEMORY_ON = "global_memory_enabled"
         private const val KEY_GLOBAL_MEMORY = "global_memory"
+        private const val KEY_CUSTOM_PROMPT = "custom_system_prompt"
+        private const val KEY_AUTO_TITLE = "auto_title_enabled"
+        private const val KEY_SPEAK_BUTTON = "speak_button_shown"
     }
 }

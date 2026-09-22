@@ -50,6 +50,55 @@ interface MessageDao {
     @Query("UPDATE messages SET videoJobId = NULL, content = :reason WHERE id = :messageId")
     suspend fun markVideoFailed(messageId: Long, reason: String)
 
+    /** How many rows this conversation holds at all, system row included. */
+    @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
+    suspend fun countForConversation(conversationId: Long): Int
+
+    /** How many of them the USER wrote. Zero is what "nothing was ever said here" means. */
+    @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId AND role = 'user'")
+    suspend fun countUserMessages(conversationId: Long): Int
+
+    /**
+     * The first thing the user said in each conversation, for the list.
+     *
+     * One query for the whole screen rather than one per row: the list is a LazyColumn and a
+     * per-row suspend read would fire again on every scroll. MIN(id) rather than MIN(timestamp)
+     * because two rows written in the same millisecond are a real thing here.
+     */
+    @Query(
+        "SELECT * FROM messages WHERE id IN " +
+            "(SELECT MIN(id) FROM messages WHERE role = 'user' GROUP BY conversationId)"
+    )
+    suspend fun getFirstUserMessages(): List<MessageEntity>
+
+    /**
+     * Everything written after [messageId] in this conversation, newest included.
+     *
+     * Ordered by (timestamp, id), not timestamp alone: a user row and the assistant placeholder
+     * that answers it can share a millisecond, and "after" has to be a total order or an edit
+     * leaves the reply it was meant to replace sitting underneath it.
+     */
+    @Query(
+        "SELECT * FROM messages WHERE conversationId = :conversationId AND " +
+            "(timestamp > :timestamp OR (timestamp = :timestamp AND id > :messageId)) " +
+            "ORDER BY timestamp ASC, id ASC"
+    )
+    suspend fun getMessagesAfter(
+        conversationId: Long,
+        timestamp: Long,
+        messageId: Long
+    ): List<MessageEntity>
+
+    @Query(
+        "DELETE FROM messages WHERE conversationId = :conversationId AND " +
+            "(timestamp > :timestamp OR (timestamp = :timestamp AND id > :messageId))"
+    )
+    suspend fun deleteMessagesAfter(
+        conversationId: Long,
+        timestamp: Long,
+        messageId: Long
+    )
+
     @Query("DELETE FROM messages WHERE id = :messageId")
     suspend fun deleteMessageById(messageId: Long)
 

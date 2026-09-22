@@ -66,6 +66,8 @@ data class SettingsUiState(
     val blockScreenshots: Boolean = false,
     /** The one memory file that is not tied to a folder. Off until the user turns it on. */
     val globalMemoryEnabled: Boolean = false,
+    val autoTitleEnabled: Boolean = true,
+    val speakButtonShown: Boolean = true,
     val globalMemoryTokens: Int = 0,
     val fetchedModels: List<String> = emptyList(),
     val fetchModelsState: FetchModelsState = FetchModelsState.Idle,
@@ -110,6 +112,8 @@ class SettingsViewModel(
             blockScreenshots = preferenceRepository.isBlockScreenshots(),
             globalMemoryEnabled = preferenceRepository.isGlobalMemoryEnabled(),
             globalMemoryTokens = TokenEstimate.of(preferenceRepository.getGlobalMemory()),
+            autoTitleEnabled = preferenceRepository.isAutoTitleEnabled(),
+            speakButtonShown = preferenceRepository.isSpeakButtonShown(),
             fetchedModels = preferenceRepository.getCachedModels(provider.id),
             modelsFetchedAt = preferenceRepository.getModelsFetchedAt(provider.id),
             unavailableModels = preferenceRepository.getUnavailableModels(provider.id),
@@ -434,6 +438,20 @@ class SettingsViewModel(
         val newValue = !_uiState.value.blockScreenshots
         preferenceRepository.setBlockScreenshots(newValue)
         _uiState.value = _uiState.value.copy(blockScreenshots = newValue)
+        return newValue
+    }
+
+    fun toggleAutoTitle(): Boolean {
+        val newValue = !_uiState.value.autoTitleEnabled
+        preferenceRepository.setAutoTitleEnabled(newValue)
+        _uiState.value = _uiState.value.copy(autoTitleEnabled = newValue)
+        return newValue
+    }
+
+    fun toggleSpeakButton(): Boolean {
+        val newValue = !_uiState.value.speakButtonShown
+        preferenceRepository.setSpeakButtonShown(newValue)
+        _uiState.value = _uiState.value.copy(speakButtonShown = newValue)
         return newValue
     }
 

@@ -19,17 +19,39 @@ internal fun RenameFolderDialog(
     currentName: String,
     onDismiss: () -> Unit,
     onRename: (String) -> Unit
+) = RenameDialog(
+    currentName = currentName,
+    titleRes = R.string.rename_folder,
+    labelRes = R.string.folder_name_hint,
+    onDismiss = onDismiss,
+    onRename = onRename
+)
+
+/**
+ * Rename anything with a name: a folder, a chat.
+ *
+ * Duplicate names are allowed on purpose - two chats about two different trips to Petra are
+ * both called Petra and the app has no business arguing - so there is no uniqueness check here.
+ * Telling them apart is the LIST's job; see ConversationCard.
+ */
+@Composable
+internal fun RenameDialog(
+    currentName: String,
+    titleRes: Int,
+    labelRes: Int,
+    onDismiss: () -> Unit,
+    onRename: (String) -> Unit
 ) {
     var name by remember { mutableStateOf(currentName) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.rename_folder)) },
+        title = { Text(stringResource(titleRes)) },
         text = {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text(stringResource(R.string.folder_name_hint)) },
+                label = { Text(stringResource(labelRes)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )

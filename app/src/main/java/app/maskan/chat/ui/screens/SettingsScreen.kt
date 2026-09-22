@@ -1031,6 +1031,60 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            Text(
+                text = stringResource(R.string.settings_chat_section),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.auto_title_label),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        // Says where the request goes, because it is the only request in the
+                        // app the user did not personally type something to cause.
+                        text = stringResource(R.string.auto_title_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Switch(
+                    checked = state.autoTitleEnabled,
+                    onCheckedChange = { viewModel.toggleAutoTitle() }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.speak_button_label),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = stringResource(R.string.speak_button_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Switch(
+                    checked = state.speakButtonShown,
+                    onCheckedChange = { viewModel.toggleSpeakButton() }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             // Shared memory - one memory file for every chat, in a folder or not
             Text(
                 text = stringResource(R.string.global_memory_label),

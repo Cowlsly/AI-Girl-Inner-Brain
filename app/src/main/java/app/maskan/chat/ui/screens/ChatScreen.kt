@@ -101,6 +101,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.maskan.chat.video.VideoProgress
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -110,7 +111,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -128,8 +133,10 @@ import app.maskan.chat.data.local.localizedName
 import app.maskan.chat.data.remote.providers.ProviderRegistry
 import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.ui.theme.maskanColors
+import app.maskan.chat.data.repository.ChatRepository
 import app.maskan.chat.data.repository.ExportFormat
 import app.maskan.chat.ui.viewmodel.ChatViewModel
+import app.maskan.chat.ui.viewmodel.PendingMessageAction
 import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -150,6 +157,11 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var showCustomPromptDialog by remember { mutableStateOf(false) }
+    // The picker, raised over a chat that already has a preset, to change it. The same screen
+    // as the one a new chat opens on - a second design for the same fourteen cards would be a
+    // second thing to keep in step.
+    var showPresetPicker by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -349,6 +361,15 @@ fun ChatScreen(
         viewModel.sweepCameraCache()
     }
 
+    // A chat nobody said anything in is not a chat. The row has to be created before this
+    // screen can open - the preset, the attachments and the documents are all keyed by its id -
+    // so the only honest place to undo it is on the way out. onDispose covers the back arrow,
+    // the system back gesture and a deep link that navigates somewhere else, which is all three
+    // ways out of here.
+    DisposableEffect(conversationId) {
+        onDispose { viewModel.discardIfEmpty() }
+    }
+
     val lastReply = uiState.messages.lastOrNull { it.role == "assistant" }
     LaunchedEffect(speakAfterMessageId, uiState.isLoading, uiState.isStreaming, lastReply?.id, lastReply?.content, uiState.error) {
         val armed = speakAfterMessageId ?: return@LaunchedEffect
@@ -364,7 +385,15 @@ fun ChatScreen(
         }
     }
 
+    BackHandler(enabled = showPresetPicker) { showPresetPicker = false }
+
     val visibleMessages = uiState.messages.filter { it.role != "system" }
+    // Derived from the collected state, not read from the ViewModel: a plain function call
+    // would be invisible to Compose and the button would keep whichever shape it was first
+    // drawn with.
+    val awaitingReply = !uiState.isLoading && !uiState.isStreaming &&
+        visibleMessages.lastOrNull()?.role == "user"
+    val speakButtonShown = viewModel.speakButtonShown()
 
     // The list is reverseLayout = true, so the newest message is index 0 and the list is anchored
     // to the bottom by default (this is what keeps the latest reply visible even as the keyboard
@@ -450,12 +479,64 @@ fun ChatScreen(
 
     if (showCustomPromptDialog) {
         CustomPromptDialog(
+            // Opens on the last prompt the user wrote, not on an empty box. Writing it out
+            // again from memory for every new chat is what "custom prompts are not saved"
+            // meant in practice.
+            initialText = viewModel.savedCustomPrompt(),
             onConfirm = { prompt ->
                 showCustomPromptDialog = false
+                showPresetPicker = false
                 viewModel.setCustomPrompt(prompt)
             },
             onDismiss = { showCustomPromptDialog = false }
         )
+    }
+
+    if (showRenameDialog) {
+        RenameDialog(
+            currentName = displayTitle(uiState.title),
+            titleRes = R.string.rename_chat,
+            labelRes = R.string.chat_name_hint,
+            onDismiss = { showRenameDialog = false },
+            onRename = { newName ->
+                viewModel.renameConversation(newName)
+                showRenameDialog = false
+            }
+        )
+    }
+
+    uiState.pendingMessageAction?.let { action ->
+        when (action.kind) {
+            PendingMessageAction.Kind.EDIT -> EditMessageDialog(
+                initialText = action.text,
+                followers = action.followers,
+                onConfirm = { viewModel.confirmEdit(it) },
+                onDismiss = { viewModel.cancelMessageAction() }
+            )
+            PendingMessageAction.Kind.DELETE -> AlertDialog(
+                onDismissRequest = { viewModel.cancelMessageAction() },
+                title = { Text(stringResource(R.string.delete_message_title)) },
+                text = {
+                    Text(
+                        if (action.followers > 0) {
+                            stringResource(R.string.delete_message_body_with_followers, action.followers)
+                        } else {
+                            stringResource(R.string.delete_message_body)
+                        }
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.confirmDelete() }) {
+                        Text(stringResource(R.string.delete_button))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.cancelMessageAction() }) {
+                        Text(stringResource(R.string.cancel_button))
+                    }
+                }
+            )
+        }
     }
 
     uiState.documentCost?.let { cost ->
@@ -526,10 +607,16 @@ fun ChatScreen(
                     // as one compact header instead of a bar floating above a caption.
                     expandedHeight = 52.dp,
                     title = {
+                        // The chat's own name, not the word "Chat". Tapping it renames it -
+                        // the other way in is the list's long-press menu, and a name is most
+                        // often worth changing while you are reading what is under it.
                         Text(
-                            text = stringResource(R.string.chat_screen_title),
+                            text = displayTitle(uiState.title),
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable(
+                                enabled = uiState.title.isNotEmpty()
+                            ) { showRenameDialog = true }
                         )
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -554,21 +641,41 @@ fun ChatScreen(
                         }
                     }
                 )
-                uiState.currentPreset?.let { preset ->
-                    Box(
+                // The strip is ALWAYS here once a chat has been set up, and it is a control.
+                // It used to appear only for a named preset, which meant a chat with a custom
+                // prompt showed nothing at all - and there was no way to change the prompt of a
+                // chat that had started, only to start a different chat.
+                if (uiState.presetSelected && !showPresetPicker) {
+                    val presetLabel = when (uiState.presetId) {
+                        ChatRepository.PRESET_CUSTOM -> stringResource(R.string.preset_custom_label)
+                        ChatRepository.PRESET_NONE, null -> stringResource(R.string.preset_none_label)
+                        else -> uiState.currentPreset?.localizedName()
+                            ?: stringResource(R.string.preset_none_label)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(MaterialTheme.maskanColors.softLavender)
+                            .clickable { showPresetPicker = true }
                             // 16dp bar inset + 48dp nav icon, so the name sits under the title.
                             // Start-relative, so it mirrors correctly in RTL.
                             .padding(start = 60.dp, end = 16.dp, bottom = 8.dp)
                     ) {
                         Text(
-                            text = preset.localizedName(),
+                            text = presetLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.change_preset),
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -609,7 +716,11 @@ fun ChatScreen(
             }
         },
         bottomBar = {
-            if (uiState.presetSelected) {
+            // Nothing to compose with while the picker is up. It is drawn over an existing
+            // chat, and on the device a message typed and sent into the composer underneath it
+            // went out with the OLD prompt while the picker sat there waiting to change it -
+            // which is the one thing the screen is open to prevent.
+            if (uiState.presetSelected && !showPresetPicker) {
                 Column(modifier = Modifier.navigationBarsPadding().imePadding()) {
                     uiState.pendingImageBytes?.let { bytes ->
                         ImagePreview(
@@ -777,8 +888,14 @@ fun ChatScreen(
                             ) {
                                 viewModel.sendMessage(inputText)
                                 inputText = ""
+                            } else if (awaitingReply) {
+                                // The last send failed, or its answer was deleted. The question
+                                // is already in the chat; asking the user to retype it to get
+                                // an answer is the dead end the report is about.
+                                viewModel.generateFromLastUserMessage()
                             }
                         },
+                        awaitingReply = awaitingReply,
                         onStop = { viewModel.cancelGeneration() },
                         isLoading = uiState.isLoading || uiState.isStreaming,
                         onAttachFile = {
@@ -853,14 +970,26 @@ fun ChatScreen(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
-        } else if (!uiState.presetSelected) {
+        } else if (!uiState.presetSelected || showPresetPicker) {
             PresetPicker(
                 defaultDialect = preferenceRepository.getDefaultDialect(),
                 onPresetSelected = { preset, dialect ->
                     when (preset.id) {
-                        "custom" -> showCustomPromptDialog = true
-                        else -> viewModel.setPreset(preset, dialect)
+                        ChatRepository.PRESET_CUSTOM -> showCustomPromptDialog = true
+                        else -> {
+                            viewModel.setPreset(preset, dialect)
+                            showPresetPicker = false
+                        }
                     }
+                },
+                onNoPreset = {
+                    viewModel.setNoPreset()
+                    showPresetPicker = false
+                },
+                onCancel = if (showPresetPicker) {
+                    { showPresetPicker = false }
+                } else {
+                    null
                 },
                 modifier = Modifier.padding(paddingValues)
             )
@@ -900,6 +1029,7 @@ fun ChatScreen(
                     key = { it.id }
                 ) { message ->
                     val isLastMessage = message == visibleMessages.lastOrNull()
+                    val busy = uiState.isLoading || uiState.isStreaming
                     val isActivelyStreaming = uiState.isStreaming && isLastMessage && message.role == "assistant"
                     // Decrypt once per message, not once per recomposition.
                     val generatedImage = message.imagePath?.let { path ->
@@ -952,6 +1082,28 @@ fun ChatScreen(
                             } else {
                                 speakText(message.id, message.content)
                             }
+                        },
+                        speakButtonShown = speakButtonShown,
+                        // Nothing is offered while a request is in flight: every one of these
+                        // rewrites the conversation the request is being built from.
+                        onRegenerate = if (
+                            !busy && isLastMessage && message.role == "assistant" &&
+                            message.content.isNotBlank() && message.imagePath == null &&
+                            message.imageMimeType == null && message.videoJobId == null
+                        ) {
+                            { viewModel.regenerateLast() }
+                        } else {
+                            null
+                        },
+                        onEdit = if (!busy && message.role == "user" && message.content.isNotBlank()) {
+                            { viewModel.beginEdit(message.id) }
+                        } else {
+                            null
+                        },
+                        onDelete = if (!busy) {
+                            { viewModel.beginDelete(message.id) }
+                        } else {
+                            null
                         }
                     )
                     uiState.documents
@@ -1155,10 +1307,11 @@ private fun FileAttachmentChip(
 
 @Composable
 private fun CustomPromptDialog(
+    initialText: String,
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var text by remember { mutableStateOf("") }
+    var text by remember { mutableStateOf(initialText) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1220,7 +1373,18 @@ private fun MessageBubble(
      * Copy / Select all toolbar at the same time, one drawn over the other. There is no gesture
      * to share with selection, so this takes a tap of its own.
      */
-    onRemember: (() -> Unit)? = null
+    onRemember: (() -> Unit)? = null,
+    /** False hides the speak button on every reply. The "Read this to me" chip is not this. */
+    speakButtonShown: Boolean = true,
+    /**
+     * Ask the same question again and replace this answer. Offered on the LAST reply only: a
+     * regenerate half way up a conversation would have to drop everything built on the answer
+     * it replaces, and a one-tap action must not be destructive. Edit-and-resend is the way to
+     * change the middle of a conversation, and it asks first.
+     */
+    onRegenerate: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null
 ) {
     val backgroundColor = if (isUser) MaterialTheme.maskanColors.userBubble else MaterialTheme.maskanColors.assistantBubble
 
@@ -1369,7 +1533,7 @@ private fun MessageBubble(
                         )
                     }
                 }
-                if (!isUser && message.content.isNotBlank()) {
+                if (!isUser && message.content.isNotBlank() && speakButtonShown) {
                     IconButton(
                         onClick = onSpeakToggle
                     ) {
@@ -1381,6 +1545,46 @@ private fun MessageBubble(
                             modifier = Modifier.size(16.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+                // An overflow button, NOT a long press on the bubble: the text is inside a
+                // SelectionContainer and a long press there raises Compose's own Copy / Select
+                // all toolbar. Two menus at once is what killed the long-press idea in session
+                // 2, and nothing about this message has changed since.
+                if (onRegenerate != null || onEdit != null || onDelete != null) {
+                    var showMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.message_actions),
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false }
+                        ) {
+                            onRegenerate?.let { action ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.regenerate_reply)) },
+                                    onClick = { showMenu = false; action() }
+                                )
+                            }
+                            onEdit?.let { action ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.edit_and_resend)) },
+                                    onClick = { showMenu = false; action() }
+                                )
+                            }
+                            onDelete?.let { action ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.delete_message)) },
+                                    onClick = { showMenu = false; action() }
+                                )
+                            }
+                        }
                     }
                 }
                 Text(
@@ -1401,6 +1605,8 @@ private fun MessageInputBar(
     onSend: () -> Unit,
     onStop: () -> Unit,
     isLoading: Boolean,
+    /** The conversation ends on a question nobody answered: Send becomes Generate. */
+    awaitingReply: Boolean = false,
     onAttachFile: () -> Unit = {},
     onAttachPhoto: () -> Unit = {},
     supportsVision: Boolean = false,
@@ -1704,14 +1910,22 @@ private fun MessageInputBar(
                 )
             }
         } else {
+            val hasSomethingToSend = text.isNotBlank() || hasAttachment
+            val generating = !hasSomethingToSend && awaitingReply
             IconButton(
                 onClick = onSend,
-                enabled = text.isNotBlank() || hasAttachment
+                enabled = hasSomethingToSend || awaitingReply
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = stringResource(R.string.send_button),
-                    tint = if (text.isNotBlank() || hasAttachment)
+                    imageVector = if (generating) {
+                        Icons.Default.Refresh
+                    } else {
+                        Icons.AutoMirrored.Filled.Send
+                    },
+                    contentDescription = stringResource(
+                        if (generating) R.string.generate_reply else R.string.send_button
+                    ),
+                    tint = if (hasSomethingToSend || awaitingReply)
                         MaterialTheme.colorScheme.primary
                     else
                         MaterialTheme.colorScheme.onSurfaceVariant
@@ -1720,6 +1934,57 @@ private fun MessageInputBar(
         }
     }
     }
+}
+
+/**
+ * Edit what was said and send it again.
+ *
+ * The warning line is the whole point of it being a dialog: on the last message this costs
+ * nothing, and in the middle of a conversation it throws away everything said since. The user
+ * is told which of those two they are about to do, with the number, before anything happens.
+ */
+@Composable
+private fun EditMessageDialog(
+    initialText: String,
+    followers: Int,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(initialText) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.edit_and_resend)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 96.dp, max = 220.dp),
+                    maxLines = 8
+                )
+                if (followers > 0) {
+                    Text(
+                        text = stringResource(R.string.edit_drops_followers, followers),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(text) },
+                enabled = text.isNotBlank()
+            ) { Text(stringResource(R.string.send_button)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel_button)) }
+        }
+    )
 }
 
 @Composable

@@ -17,7 +17,6 @@
     <string name="search_no_results">لا توجد محادثات مطابقة</string>
 
     <!-- Chat screen -->
-    <string name="chat_screen_title">محادثة</string>
     <string name="empty_chat">ابدأ محادثة\nاكتب رسالة في الأسفل.</string>
     <string name="message_placeholder">اكتب رسالتك…</string>
     <string name="send_button">إرسال</string>
@@ -422,4 +421,26 @@
     <string name="document_meta_tokens">الرموز: نحو %1$d</string>
     <string name="document_show_notes">أظهر الملاحظات</string>
     <string name="document_hide_notes">أخف الملاحظات</string>
+    <string name="new_chat_title">محادثة جديدة</string>
+    <string name="folder_chat_count_desc">المحادثات: %d</string>
+    <string name="rename_chat">أعد تسمية المحادثة</string>
+    <string name="chat_name_hint">اسم المحادثة</string>
+    <string name="preset_custom_label">أسلوبك الخاص</string>
+    <string name="preset_none_label">دون أسلوب</string>
+    <string name="preset_none_action">ابدأ دون أسلوب</string>
+    <string name="change_preset">غيّر الأسلوب</string>
+    <string name="message_actions">خيارات الرسالة</string>
+    <string name="regenerate_reply">أجب مرة أخرى</string>
+    <string name="edit_and_resend">عدّل وأعد الإرسال</string>
+    <string name="delete_message">احذف الرسالة</string>
+    <string name="delete_message_title">حذف هذه الرسالة؟</string>
+    <string name="delete_message_body">ستخرج من المحادثة نهائيًا.</string>
+    <string name="delete_message_body_with_followers">وسيخرج معها كل ما قيل بعدها. الرسائل التي ستخرج: %d</string>
+    <string name="edit_drops_followers">الإرسال يزيل كل ما قيل بعد هذه الرسالة. الرسائل التي ستخرج: %d</string>
+    <string name="generate_reply">أجب عن هذه</string>
+    <string name="settings_chat_section">المحادثة</string>
+    <string name="auto_title_label">تسمية المحادثات تلقائيًا</string>
+    <string name="auto_title_hint">بعد أول إجابة، يطلب مسكن عنوانًا قصيرًا من المزوّد الذي اخترته أصلًا، بلغة المحادثة نفسها. طلب واحد إضافي، إلى ذلك المزوّد وحده — فليس لمسكن خادم خاص به.</string>
+    <string name="speak_button_label">إظهار زر النطق على الإجابات</string>
+    <string name="speak_button_hint">إيقافه يخفي الزر أسفل كل إجابة، ويبقى “اقرأ هذا لي” أسفل الصورة كما هو.</string>
 </resources>

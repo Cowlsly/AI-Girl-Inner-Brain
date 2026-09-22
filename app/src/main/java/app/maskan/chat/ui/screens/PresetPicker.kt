@@ -20,6 +20,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,7 +54,18 @@ import app.maskan.chat.ui.theme.maskanColors
 fun PresetPicker(
     defaultDialect: Dialect,
     onPresetSelected: (SystemPromptPreset, Dialect?) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Start with no system prompt at all.
+     *
+     * A line under the heading rather than a fifteenth card, because it is not a fifteenth
+     * personality - it is the absence of one, and the cards are all answers to "who should the
+     * assistant be". Until this existed there was no way past this screen without giving the
+     * model a character first.
+     */
+    onNoPreset: (() -> Unit)? = null,
+    /** Non-null while this is being shown over an existing chat, to back out of it. */
+    onCancel: (() -> Unit)? = null
 ) {
     val presets = Presets.all(defaultDialect)
 
@@ -88,6 +100,30 @@ fun PresetPicker(
                 .fillMaxWidth()
                 .padding(top = 12.dp, bottom = 6.dp)
         )
+
+        if (onNoPreset != null || onCancel != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                onNoPreset?.let {
+                    TextButton(onClick = it) {
+                        Text(
+                            text = stringResource(R.string.preset_none_action),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+                onCancel?.let {
+                    TextButton(onClick = it) {
+                        Text(
+                            text = stringResource(R.string.cancel_button),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+            }
+        }
 
         presets.chunked(2).forEach { rowPresets ->
             Row(

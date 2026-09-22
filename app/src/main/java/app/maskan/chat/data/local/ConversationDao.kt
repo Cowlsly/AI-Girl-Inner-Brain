@@ -49,6 +49,22 @@ interface ConversationDao {
     @Query("UPDATE conversations SET providerId = :providerId, modelId = :modelId WHERE id = :id")
     suspend fun updateProvider(id: Long, providerId: String, modelId: String?)
 
+    /**
+     * Conversations that were opened and left without a word: no message rows at all, no
+     * document read into them, and still carrying the default title.
+     *
+     * All three conditions, deliberately narrow. A chat the user typed in has rows; a chat they
+     * renamed has a different title; a chat they dropped a PDF into has a document. Anything
+     * else is a row the FAB created and nobody used, and there are installs carrying a dozen of
+     * them from 2.5.
+     */
+    @Query(
+        "SELECT id FROM conversations WHERE title = :defaultTitle " +
+            "AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.conversationId = conversations.id) " +
+            "AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.conversationId = conversations.id)"
+    )
+    suspend fun getDiscardableConversationIds(defaultTitle: String): List<Long>
+
     @Query("SELECT * FROM conversations WHERE title LIKE '%' || :query || '%' ORDER BY createdAt DESC")
     suspend fun searchConversationsByTitle(query: String): List<ConversationEntity>
 

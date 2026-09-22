@@ -71,6 +71,23 @@ data class Reading(
     val waitingSeconds: Int = 0
 )
 
+/**
+ * A destructive message action waiting for the user to say yes.
+ *
+ * [followers] is how many rows go with it, which is the whole reason there is a dialog: "edit
+ * and resend" on the last message costs nothing, and on the fourth message of a twelve-message
+ * conversation it costs eight messages. The user is told which of those two they are doing.
+ */
+data class PendingMessageAction(
+    val messageId: Long,
+    val kind: Kind,
+    val followers: Int,
+    /** The current text, for EDIT - the dialog opens on it. */
+    val text: String = ""
+) {
+    enum class Kind { EDIT, DELETE }
+}
+
 data class ChatUiState(
     val messages: List<MessageEntity> = emptyList(),
     val isLoading: Boolean = false,
@@ -79,7 +96,17 @@ data class ChatUiState(
     val selectedProviderId: String = "deepseek",
     val selectedModel: String = ProviderRegistry.getDefaultProvider().defaultModel,
     val currentPreset: SystemPromptPreset? = null,
+    /**
+     * The conversation's stored systemPromptId, verbatim.
+     *
+     * [currentPreset] cannot carry this: it is null both for "no preset, deliberately" and for
+     * a custom prompt, which are two different things to show in the header, and null again for
+     * "not chosen yet", which is a third. The id is the only thing that tells them apart.
+     */
+    val presetId: String? = null,
     val presetSelected: Boolean = false,
+    /** What this chat is called. Shown in the header, where it can be tapped to rename it. */
+    val title: String = "",
     val pendingImageBytes: ByteArray? = null,
     val pendingImageMimeType: String? = null,
     val pendingFileText: String? = null,
@@ -157,7 +184,9 @@ data class ChatUiState(
      * data. Absent for a message whose worker has not reported yet (the bubble shows
      * "waiting"), and never persisted - the database holds only the job id.
      */
-    val videoProgress: Map<Long, VideoProgress> = emptyMap()
+    val videoProgress: Map<Long, VideoProgress> = emptyMap(),
+    /** An edit or a delete, waiting for the confirm dialog. */
+    val pendingMessageAction: PendingMessageAction? = null
 )
 
 class ChatViewModel(
@@ -213,11 +242,12 @@ class ChatViewModel(
             val conversation = chatRepository.getConversationById(conversationId)
             val preset = when (conversation?.systemPromptId) {
                 null -> null
+                ChatRepository.PRESET_NONE -> null
                 "en_to_ar" -> {
                     val dialect = conversation.dialectId?.let { Dialect.fromId(it) } ?: Dialect.MSA
                     Presets.enToArPreset(dialect)
                 }
-                "custom" -> null
+                ChatRepository.PRESET_CUSTOM -> null
                 else -> Presets.getById(conversation.systemPromptId)
             }
             val providerId = conversation?.providerId ?: "deepseek"
@@ -230,7 +260,9 @@ class ChatViewModel(
                 selectedProviderId = providerId,
                 selectedModel = model,
                 currentPreset = preset,
+                presetId = conversation?.systemPromptId,
                 presetSelected = conversation?.systemPromptId != null,
+                title = conversation?.title.orEmpty(),
                 folderId = folder?.id,
                 folderName = folder?.name.orEmpty(),
                 selectedImageModelName = keyRepository.getSelectedImageModel(providerId).orEmpty(),
@@ -251,27 +283,224 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Choose - or change - this chat's system prompt.
+     *
+     * The same call before the first message and half way through: the repository rewrites the
+     * chat's one system row either way, so the NEXT request obeys the new choice and the
+     * request shape does not change. Nothing already said is touched.
+     */
     fun setPreset(preset: SystemPromptPreset, dialect: Dialect? = null) {
         viewModelScope.launch {
             val dialectId = if (preset.id == "en_to_ar") (dialect?.id ?: Dialect.MSA.id) else null
-            chatRepository.updateSystemPrompt(currentConversationId, preset.id, dialectId)
+            chatRepository.applyPreset(currentConversationId, preset.id, dialectId)
             _uiState.value = _uiState.value.copy(
                 currentPreset = preset,
+                presetId = preset.id,
                 presetSelected = true
+            )
+            refreshMessages()
+        }
+    }
+
+    /**
+     * No preset at all, as a decision rather than an absence.
+     *
+     * Worth its own entry: before this, a chat could not be started without picking one of
+     * fourteen personalities, and someone who just wants to ask a model a question had to give
+     * it a character first.
+     */
+    fun setNoPreset() {
+        viewModelScope.launch {
+            chatRepository.applyPreset(currentConversationId, ChatRepository.PRESET_NONE)
+            _uiState.value = _uiState.value.copy(
+                currentPreset = null,
+                presetId = ChatRepository.PRESET_NONE,
+                presetSelected = true
+            )
+            refreshMessages()
+        }
+    }
+
+    /** The prompt last written in "Create your own", so the box is not empty every time. */
+    fun savedCustomPrompt(): String = preferenceRepository.getCustomPrompt().orEmpty()
+
+    fun setCustomPrompt(systemPrompt: String) {
+        viewModelScope.launch {
+            // Kept for the NEXT chat as well as this one. It being thrown away the moment the
+            // dialog closed is the whole of the "custom prompts are not saved" report: the text
+            // was in the database all along, and there was no way to see it or use it again.
+            preferenceRepository.setCustomPrompt(systemPrompt)
+            chatRepository.applyPreset(
+                currentConversationId,
+                ChatRepository.PRESET_CUSTOM,
+                customText = systemPrompt
+            )
+            _uiState.value = _uiState.value.copy(
+                currentPreset = null,
+                presetId = ChatRepository.PRESET_CUSTOM,
+                presetSelected = true
+            )
+            refreshMessages()
+        }
+    }
+
+    // ── The chat's name ─────────────────────────────────────────
+
+    fun renameConversation(title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            chatRepository.updateConversationTitle(currentConversationId, trimmed)
+            _uiState.value = _uiState.value.copy(title = trimmed)
+        }
+    }
+
+    /**
+     * Name the chat from its first exchange, if the user has left that switch on.
+     *
+     * Fires once - the repository refuses a conversation that is past its first exchange or
+     * carries a name somebody chose - and never blocks anything: it runs after the reply has
+     * landed, in its own coroutine, and a failure changes nothing on screen.
+     */
+    private fun autoTitle() {
+        val conversationId = currentConversationId
+        viewModelScope.launch {
+            chatRepository.generateTitle(conversationId)
+            if (currentConversationId != conversationId) return@launch
+            val conversation = chatRepository.getConversationById(conversationId) ?: return@launch
+            _uiState.value = _uiState.value.copy(title = conversation.title)
+        }
+    }
+
+    // ── Leaving a chat ──────────────────────────────────────
+
+    /**
+     * Discard this conversation if nothing was ever said in it.
+     *
+     * Called from the screen's onDispose, so the back arrow, the system back gesture and a deep
+     * link that navigates somewhere else are all covered by one hook. The conversation id is
+     * read BEFORE the coroutine starts: loadConversation for the next chat can win the race
+     * otherwise, and the wrong conversation gets tested for emptiness.
+     */
+    fun discardIfEmpty() {
+        val conversationId = currentConversationId
+        if (conversationId < 0) return
+        viewModelScope.launch { chatRepository.discardIfEmpty(conversationId) }
+    }
+
+    // ── Message-level control ──────────────────────────────────
+
+    /**
+     * Ask the same question again and replace the answer.
+     *
+     * Offered on the LAST reply only, which is what keeps it a one-tap action: regenerating a
+     * reply in the middle of a conversation necessarily drops everything built on top of it,
+     * and a one-tap action must not be destructive. The old bubble goes first so the request
+     * that goes out is identical to the one that produced it - history, folder text, photos and
+     * all - rather than one that has the previous answer in it.
+     */
+    fun regenerateLast() {
+        val last = _uiState.value.messages.lastOrNull { it.role != "system" } ?: return
+        if (last.role != "assistant") return
+        streamingJob = viewModelScope.launch {
+            chatRepository.deleteMessage(currentConversationId, last.id, alsoAfter = false)
+            refreshMessages()
+            runLastTurn()
+        }
+    }
+
+    /**
+     * A user message with no answer under it - the last send failed, or its reply was deleted -
+     * is one tap from being answered. Without this the conversation is a dead end: the composer
+     * wants text before it will send, and the text is already in the chat.
+     */
+    fun generateFromLastUserMessage() {
+        val last = _uiState.value.messages.lastOrNull { it.role != "system" } ?: return
+        if (last.role != "user") return
+        streamingJob = viewModelScope.launch { runLastTurn() }
+    }
+
+    /** The one streaming tail shared by regenerate, generate and the error retry. */
+    private suspend fun runLastTurn() {
+        _uiState.value = _uiState.value.copy(isLoading = true, isStreaming = false, error = null)
+        lastRequest = {
+            streamingJob = viewModelScope.launch { runLastTurn() }
+        }
+        chatRepository.regenerateLastReply(currentConversationId)
+            .catch { error -> handleSendFailure(error) }
+            .collect { event -> handleStreamEvent(event) }
+    }
+
+    /** Open the confirm for an edit; the dialog needs the text and the cost before it can ask. */
+    fun beginEdit(messageId: Long) {
+        viewModelScope.launch {
+            val message = _uiState.value.messages.firstOrNull { it.id == messageId } ?: return@launch
+            val followers = chatRepository.countMessagesAfter(currentConversationId, messageId)
+            _uiState.value = _uiState.value.copy(
+                pendingMessageAction = PendingMessageAction(
+                    messageId = messageId,
+                    kind = PendingMessageAction.Kind.EDIT,
+                    followers = followers,
+                    text = message.content
+                )
             )
         }
     }
 
-    fun setCustomPrompt(systemPrompt: String) {
+    fun beginDelete(messageId: Long) {
         viewModelScope.launch {
-            chatRepository.updateSystemPrompt(currentConversationId, "custom", null)
-            chatRepository.saveMessage(currentConversationId, "system", systemPrompt)
+            val message = _uiState.value.messages.firstOrNull { it.id == messageId } ?: return@launch
+            // Deleting a QUESTION takes the answer with it and everything built on it; deleting
+            // an ANSWER takes only itself, and leaves the question waiting to be answered again.
+            val followers = if (message.role == "user") {
+                chatRepository.countMessagesAfter(currentConversationId, messageId)
+            } else {
+                0
+            }
             _uiState.value = _uiState.value.copy(
-                currentPreset = null,
-                presetSelected = true
+                pendingMessageAction = PendingMessageAction(
+                    messageId = messageId,
+                    kind = PendingMessageAction.Kind.DELETE,
+                    followers = followers
+                )
             )
         }
     }
+
+    fun cancelMessageAction() {
+        _uiState.value = _uiState.value.copy(pendingMessageAction = null)
+    }
+
+    /** Confirmed: rewrite what was said, drop what followed from it, and ask again. */
+    fun confirmEdit(newText: String) {
+        val action = _uiState.value.pendingMessageAction ?: return
+        val trimmed = newText.trim()
+        _uiState.value = _uiState.value.copy(pendingMessageAction = null)
+        if (trimmed.isEmpty()) return
+        streamingJob = viewModelScope.launch {
+            chatRepository.editUserMessage(currentConversationId, action.messageId, trimmed)
+            refreshMessages()
+            runLastTurn()
+        }
+    }
+
+    fun confirmDelete() {
+        val action = _uiState.value.pendingMessageAction ?: return
+        _uiState.value = _uiState.value.copy(pendingMessageAction = null)
+        viewModelScope.launch {
+            chatRepository.deleteMessage(
+                currentConversationId,
+                action.messageId,
+                alsoAfter = action.followers > 0
+            )
+            refreshMessages()
+            refreshDocuments()
+        }
+    }
+
+    /** Whether replies carry a speak button. The setting, read where the bubble is built. */
+    fun speakButtonShown(): Boolean = preferenceRepository.isSpeakButtonShown()
 
     fun cancelGeneration() {
         streamingJob?.cancel()
@@ -1037,6 +1266,7 @@ class ChatViewModel(
             }
             is ChatRepository.StreamEvent.Done -> {
                 _uiState.value = _uiState.value.copy(isStreaming = false)
+                autoTitle()
             }
         }
     }
