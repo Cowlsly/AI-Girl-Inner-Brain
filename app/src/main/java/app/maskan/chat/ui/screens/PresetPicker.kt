@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.PlatformTextStyle
@@ -67,7 +69,8 @@ fun PresetPicker(
     /** Non-null while this is being shown over an existing chat, to back out of it. */
     onCancel: (() -> Unit)? = null
 ) {
-    val presets = Presets.all(defaultDialect)
+    val uiLanguage = LocalConfiguration.current.locales.get(0)?.language ?: "en"
+    val presets = Presets.all(defaultDialect).filter { visibleIn(it.id, uiLanguage) }
 
     var showDialectSheet by remember { mutableStateOf(false) }
 
@@ -84,6 +87,10 @@ fun PresetPicker(
 
     // A height-filling column instead of a scrolling grid: the heading sits on top and the cards
     // are laid out in equal-weight rows of two, so all presets fit on a single screen with no scroll.
+    //
+    // Measured before assuming (Pixel 10 Pro, Arabic): a weighted row gives each card about 87dp
+    // and the content wants about 76dp. The card is NOT what was cutting the Arabic - the
+    // lineHeight clamp on the text was, and that is what the rest of this file no longer does.
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -92,13 +99,13 @@ fun PresetPicker(
     ) {
         Text(
             text = stringResource(R.string.preset_picker_title),
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 12.dp, bottom = 6.dp)
+                .padding(top = 4.dp)
         )
 
         if (onNoPreset != null || onCancel != null) {
@@ -106,8 +113,11 @@ fun PresetPicker(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center
             ) {
+                // contentPadding, not a fixed height: Material gives a TextButton a 48dp
+                // minimum, which was most of the gap between the question and the first card.
+                // Trimming the padding closes it without capping the label.
                 onNoPreset?.let {
-                    TextButton(onClick = it) {
+                    TextButton(onClick = it, contentPadding = TIGHT_BUTTON_PADDING) {
                         Text(
                             text = stringResource(R.string.preset_none_action),
                             style = MaterialTheme.typography.labelLarge
@@ -115,7 +125,7 @@ fun PresetPicker(
                     }
                 }
                 onCancel?.let {
-                    TextButton(onClick = it) {
+                    TextButton(onClick = it, contentPadding = TIGHT_BUTTON_PADDING) {
                         Text(
                             text = stringResource(R.string.cancel_button),
                             style = MaterialTheme.typography.labelLarge
@@ -156,6 +166,21 @@ fun PresetPicker(
     }
 }
 
+/**
+ * Whether a preset belongs on the picker for someone reading the app in [uiLanguage].
+ *
+ * Only the translation pairs are ever hidden, and only from the language that is not in them.
+ * Everything else is always shown.
+ */
+private fun visibleIn(presetId: String, uiLanguage: String): Boolean = when (presetId) {
+    "en_to_th", "th_to_en" -> uiLanguage != "ar"
+    "en_to_ar", "ar_to_en" -> uiLanguage != "th"
+    else -> true
+}
+
+/** Horizontal room to tap, no vertical padding of its own - the label sets the height. */
+private val TIGHT_BUTTON_PADDING = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
+
 @Composable
 private fun PresetCard(
     preset: SystemPromptPreset,
@@ -182,9 +207,12 @@ private fun PresetCard(
             // description has a clear, unclipped spot directly beneath the title.
             verticalArrangement = Arrangement.Center
         ) {
-            // The emoji/flag line-box renders ~2x the glyph height regardless of includeFontPadding,
-            // which was eating the whole card and laying the description out at height 0. Pinning the
-            // icon inside a fixed 30dp box caps that footprint so title + description always fit.
+            // The emoji/flag line-box renders ~2x the glyph height regardless of
+            // includeFontPadding, which eats the whole card and lays the description out at
+            // height 0. This cap is what stops that. It caps ONE KNOWN EMOJI being normalised,
+            // not translated text - relaxing it to a minimum was tried and reverted, because
+            // the icon then took the room the description needed and every Arabic description
+            // on the screen was sliced to its top two pixels.
             Box(
                 modifier = Modifier.height(28.dp),
                 contentAlignment = Alignment.Center
@@ -204,12 +232,14 @@ private fun PresetCard(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = name,
-                // Unbolded and a touch smaller per request; one line so it never wraps.
-                // includeFontPadding=false + trimmed lineHeight removes the tall script's extra
-                // vertical padding so Arabic sits tight to the icon instead of dropping a blank line.
+                // includeFontPadding=false + Trim.Both is what keeps Arabic single-spaced here;
+                // it strips the leading, not the glyphs. lineHeight is 1.5x rather than the 1.08x
+                // it used to be, because a line box SHORTER than the ink is what cuts the face in
+                // half - and on a single line Trim.Both trims back to the ink, so the larger
+                // number costs no space at all.
                 style = MaterialTheme.typography.titleSmall.copy(
                     fontSize = 12.sp,
-                    lineHeight = 13.sp,
+                    lineHeight = 18.sp,
                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                     lineHeightStyle = LineHeightStyle(
                         alignment = LineHeightStyle.Alignment.Center,
@@ -223,12 +253,13 @@ private fun PresetCard(
             )
             if (preset.category != PresetCategory.TRANSLATION) Text(
                 text = description,
-                // One line. includeFontPadding=false + Trim.Both strips the extra leading that
-                // Arabic glyph metrics add above/below the line, which was pushing this line off the
-                // bottom of the short one-page card (it rendered, but got clipped to nothing).
+                // The line the Honor sliced through the middle. 11.sp around a 10.sp Arabic
+                // glyph is shorter than the ink; 15.sp is above it for both the Arabic face and
+                // the Thai one with its marks above and below. Trim.Both still removes the
+                // leading, so the spacing is exactly what it was.
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 10.sp,
-                    lineHeight = 11.sp,
+                    lineHeight = 15.sp,
                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                     lineHeightStyle = LineHeightStyle(
                         alignment = LineHeightStyle.Alignment.Center,

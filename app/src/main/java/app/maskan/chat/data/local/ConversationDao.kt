@@ -57,10 +57,17 @@ interface ConversationDao {
      * renamed has a different title; a chat they dropped a PDF into has a document. Anything
      * else is a row the FAB created and nobody used, and there are installs carrying a dozen of
      * them from 2.5.
+     *
+     * "Has rows" means a USER or ASSISTANT row, which is the same question `discardIfEmpty`
+     * asks. It used to mean any row at all, and the two rules disagreeing left a hole: choosing
+     * a preset inserts a SYSTEM row, so a chat where somebody picked a style, said nothing and
+     * had the app killed before the screen could dispose was caught by neither rule and stayed
+     * in Unfiled forever. A system or notice row is the app talking to itself.
      */
     @Query(
         "SELECT id FROM conversations WHERE title = :defaultTitle " +
-            "AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.conversationId = conversations.id) " +
+            "AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.conversationId = conversations.id " +
+            "AND messages.role IN ('user', 'assistant')) " +
             "AND NOT EXISTS (SELECT 1 FROM documents WHERE documents.conversationId = conversations.id)"
     )
     suspend fun getDiscardableConversationIds(defaultTitle: String): List<Long>
