@@ -42,6 +42,39 @@ interface AiProvider {
      */
     val canAutoTitle: Boolean get() = true
 
+    /**
+     * Whether a request to this provider needs an API key.
+     *
+     * Defaults to the question the repository used to ask directly - a provider with a
+     * user-supplied base URL is someone's own server and may well have no key at all. The
+     * on-device provider answers false for a different reason: there is nothing to have a key
+     * WITH, and the key gate would otherwise refuse every request before it was built.
+     */
+    val requiresApiKey: Boolean get() = !supportsCustomBaseUrl
+
+    /**
+     * The context window of the model this provider is about to answer with, when it is known
+     * exactly, or null when it is not.
+     *
+     * Null for every provider that existed before the on-device one: a cloud catalogue's
+     * windows differ per model and change without notice, and a user's own Ollama server could
+     * be running anything. Where it IS known - a `.task` file whose KV cache is fixed at the
+     * size it was built with - the request assembly spends against the real number instead of
+     * a constant chosen for "a local model" in the abstract.
+     */
+    val contextTokens: Int? get() = null
+
+    /**
+     * Whether this provider has no system role and folds the system text into the first user
+     * turn, the way Gemma's prompt template does.
+     *
+     * It changes nothing about what is assembled and everything about how the debug line reads:
+     * after the fold the outgoing request genuinely has no system message, and a log line
+     * saying `systems=0 voiceTokens=0` on a request that carries a 413-token voice would cost
+     * somebody an afternoon. See logContext.
+     */
+    val foldsSystemPrompt: Boolean get() = false
+
     val isLocal: Boolean get() = false
     val availableModels: List<String>
     val defaultModel: String

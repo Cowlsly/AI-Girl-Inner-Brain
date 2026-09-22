@@ -8,5 +8,9 @@
             android:name="app.maskan.chat.debug.ClipReceiver"
             android:enabled="true"
             android:exported="true" />
+        <receiver
+            android:name="app.maskan.chat.debug.LlmProbeReceiver"
+            android:enabled="true"
+            android:exported="true" />
     </application>
 </manifest>

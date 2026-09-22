@@ -237,20 +237,78 @@ class ChatRepository(
     }
 
     /**
+     * What a request to [providerId] may spend, and on what.
+     *
+     * Three cases, in order of how much is known. A provider that states its window (the
+     * on-device one, whose `.task` file has a fixed KV cache) gets budgets derived from that
+     * number. A local server does not state one - it could be running anything - and keeps the
+     * numbers verified against the AI PC in session 4. A cloud provider keeps 2.5's.
+     */
+    private fun budgetFor(providerId: String): RequestBudget {
+        val provider = ProviderRegistry.getProvider(providerId)
+        val window = provider?.contextTokens
+            ?: return if (provider?.isLocal == true) {
+                RequestBudget(
+                    system = MAX_SYSTEM_TOKENS,
+                    document = MAX_DOCUMENT_TOKENS_LOCAL,
+                    chunk = DocumentChunks.CHUNK_TOKENS_LOCAL,
+                    chunksPerQuestion = DocumentChunks.CHUNKS_PER_QUESTION,
+                    window = null
+                )
+            } else {
+                RequestBudget(
+                    system = MAX_SYSTEM_TOKENS,
+                    document = MAX_DOCUMENT_TOKENS,
+                    chunk = DocumentChunks.CHUNK_TOKENS,
+                    chunksPerQuestion = DocumentChunks.CHUNKS_PER_QUESTION,
+                    window = null
+                )
+            }
+
+        // Everything below is division of one number. The shares are stated as constants
+        // because they are judgements, and a judgement with a name can be argued with.
+        val answer = (window * ANSWER_SHARE).toInt()
+        val headroom = (window * HEADROOM_SHARE).toInt()
+        val usable = (window - answer - headroom).coerceAtLeast(MIN_USABLE_TOKENS)
+        val system = round100(usable * SYSTEM_SHARE)
+        val document = round100(usable * DOCUMENT_SHARE)
+        return RequestBudget(
+            system = system,
+            document = document,
+            // Half the document budget, because exactly one excerpt goes with a question here:
+            // two quarter-sized excerpts from a file read in 1,000-token chunks would send a
+            // quarter of each chunk and pay for the other three quarters twice.
+            chunk = (document / 2).coerceAtLeast(MIN_CHUNK_TOKENS),
+            chunksPerQuestion = 1,
+            window = window
+        )
+    }
+
+    private fun round100(value: Double): Int = (value.toInt() / 100) * 100
+
+    /**
+     * What one request may spend. [window] is null when the model's own window is not knowable,
+     * which is every provider but the on-device one.
+     */
+    private data class RequestBudget(
+        val system: Int,
+        val document: Int,
+        val chunk: Int,
+        val chunksPerQuestion: Int,
+        val window: Int?
+    )
+
+    /**
      * The chunk size this conversation's provider can afford.
      *
-     * A 4k-context model on someone's own machine has room for a 1,000-token excerpt and the
-     * question and its own answer; 1,500 would have the server truncate the history silently,
-     * which reads as a model that forgot the conversation.
+     * Persisted with the document, because it is not a constant: a chat moved from a cloud
+     * provider to the on-device one mid-pass would otherwise resume against a different set of
+     * chunks than the ones already summarised.
      */
     suspend fun chunkTokensFor(conversationId: Long): Int {
         val conversation = conversationDao.getConversationById(conversationId)
-        val provider = conversation?.let { ProviderRegistry.getProvider(it.providerId) }
-        return if (provider?.isLocal == true) {
-            DocumentChunks.CHUNK_TOKENS_LOCAL
-        } else {
-            DocumentChunks.CHUNK_TOKENS
-        }
+            ?: return DocumentChunks.CHUNK_TOKENS
+        return budgetFor(conversation.providerId).chunk
     }
 
     /**
@@ -369,7 +427,7 @@ class ChatRepository(
             ?: throw Exception("Unknown provider: " + providerId)
 
         val apiKey = keyRepository.getApiKey(providerId) ?: ""
-        if (apiKey.isBlank() && !provider.supportsCustomBaseUrl) {
+        if (apiKey.isBlank() && provider.requiresApiKey) {
             throw Exception("API key not set. Please add your API key in Settings.")
         }
         val model = conversation.modelId
@@ -407,21 +465,23 @@ class ChatRepository(
     private fun documentBlock(
         docs: List<DocumentEntity>,
         question: String,
-        local: Boolean
+        budget: RequestBudget
     ): String? {
         val readable = docs.filter { it.chunkCount > 0 && it.text.isNotBlank() }
         if (readable.isEmpty()) return null
 
-        val budget = if (local) MAX_DOCUMENT_TOKENS_LOCAL else MAX_DOCUMENT_TOKENS
-        val perDocument = (budget / readable.size).coerceAtLeast(400)
-        val blocks = readable.map { oneDocumentBlock(it, question, perDocument) }
+        val perDocument = (budget.document / readable.size).coerceAtLeast(400)
+        val blocks = readable.map {
+            oneDocumentBlock(it, question, perDocument, budget.chunksPerQuestion)
+        }
         return blocks.joinToString("\n\n").takeIf { it.isNotBlank() }
     }
 
     private fun oneDocumentBlock(
         document: DocumentEntity,
         question: String,
-        budget: Int
+        budget: Int,
+        chunksPerQuestion: Int
     ): String {
         val header = StringBuilder()
         header.append("### From the file \"").append(document.name).append("\"")
@@ -454,7 +514,7 @@ class ChatRepository(
             ?.let { TokenEstimate.clamp(it, notesBudget) }
 
         val chunks = DocumentChunks.chunk(document.text, document.chunkTokens)
-        val picked = DocumentChunks.rank(question, chunks)
+        val picked = DocumentChunks.rank(question, chunks, chunksPerQuestion)
         val excerptBudget = (budget - TokenEstimate.of(notes) - TokenEstimate.of(header.toString()))
             .coerceAtLeast(200)
         val perExcerpt = (excerptBudget / picked.size.coerceAtLeast(1)).coerceAtLeast(150)
@@ -509,8 +569,7 @@ class ChatRepository(
                 }
 
             val apiKey = keyRepository.getApiKey(providerId) ?: ""
-            val isLocalProvider = provider.supportsCustomBaseUrl
-            if (apiKey.isBlank() && !isLocalProvider) {
+            if (apiKey.isBlank() && provider.requiresApiKey) {
                 messageDao.deleteMessageById(userMessageId)
                 return Result.failure(Exception("API key not set. Please add your API key in Settings."))
             }
@@ -654,7 +713,7 @@ class ChatRepository(
                 ?: return Result.failure(Exception("Unknown provider: $providerId"))
 
             val apiKey = keyRepository.getApiKey(providerId) ?: ""
-            if (apiKey.isBlank() && !provider.supportsCustomBaseUrl) {
+            if (apiKey.isBlank() && provider.requiresApiKey) {
                 return Result.failure(Exception("API key not set. Please add your API key in Settings."))
             }
 
@@ -712,7 +771,7 @@ class ChatRepository(
 
         val apiKey = keyRepository.getApiKey(providerId) ?: ""
         val isLocalProvider = provider.supportsCustomBaseUrl
-        if (apiKey.isBlank() && !isLocalProvider) {
+        if (apiKey.isBlank() && provider.requiresApiKey) {
             throw Exception("API key not set. Please add your API key in Settings.")
         }
 
@@ -1022,8 +1081,7 @@ class ChatRepository(
             ?: throw Exception("Unknown provider: $providerId")
 
         val apiKey = keyRepository.getApiKey(providerId) ?: ""
-        val isLocalProvider = provider.supportsCustomBaseUrl
-        if (apiKey.isBlank() && !isLocalProvider) {
+        if (apiKey.isBlank() && provider.requiresApiKey) {
             throw Exception("API key not set. Please add your API key in Settings.")
         }
 
@@ -1117,7 +1175,7 @@ class ChatRepository(
                 ?: return Result.failure(Exception("Unknown provider: $providerId"))
             val apiKey = keyRepository.getApiKey(providerId) ?: ""
             val isLocal = provider.supportsCustomBaseUrl
-            if (apiKey.isBlank() && !isLocal) {
+            if (apiKey.isBlank() && provider.requiresApiKey) {
                 return Result.failure(Exception("API key not set. Please add your API key in Settings."))
             }
             val baseUrl = keyRepository.getBaseUrl(providerId)
@@ -1159,8 +1217,7 @@ class ChatRepository(
                 ?: return Result.failure(Exception("Unknown provider: $providerId"))
 
             val apiKey = keyRepository.getApiKey(providerId) ?: ""
-            val isLocalProvider = provider.supportsCustomBaseUrl
-            if (apiKey.isBlank() && !isLocalProvider) {
+            if (apiKey.isBlank() && provider.requiresApiKey) {
                 return Result.failure(Exception("API key not set. Please add your API key in Settings."))
             }
 
@@ -1368,7 +1425,7 @@ class ChatRepository(
             val provider = ProviderRegistry.getProvider(conversation.providerId) ?: return
             if (!provider.canAutoTitle) return
             val apiKey = keyRepository.getApiKey(conversation.providerId) ?: ""
-            if (apiKey.isBlank() && !provider.supportsCustomBaseUrl) return
+            if (apiKey.isBlank() && provider.requiresApiKey) return
             val model = conversation.modelId
                 ?: keyRepository.getSelectedModel(conversation.providerId)
                 ?: provider.defaultModel
@@ -1465,7 +1522,12 @@ class ChatRepository(
      * the ceiling leaves after the preset and the memory, and the whole is clamped again as a
      * backstop for the case where the memory alone is enormous.
      */
-    private fun assembleSystemText(preset: String, voice: String, project: ProjectText): String {
+    private fun assembleSystemText(
+        preset: String,
+        voice: String,
+        project: ProjectText,
+        ceiling: Int
+    ): String {
         val memoryBlock = if (project.memory.isEmpty()) {
             ""
         } else {
@@ -1478,13 +1540,13 @@ class ChatRepository(
         var keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock) +
             TokenEstimate.of(voiceBlock)
         if (project.instructions.isNotEmpty() &&
-            MAX_SYSTEM_TOKENS - keptTokens < MIN_INSTRUCTION_TOKENS &&
+            ceiling - keptTokens < MIN_INSTRUCTION_TOKENS &&
             voiceBlock.isNotEmpty()
         ) {
             voiceBlock = ""
             keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock)
         }
-        val budget = (MAX_SYSTEM_TOKENS - keptTokens).coerceAtLeast(0)
+        val budget = (ceiling - keptTokens).coerceAtLeast(0)
         val instructionsBlock = if (project.instructions.isEmpty()) {
             ""
         } else {
@@ -1493,7 +1555,7 @@ class ChatRepository(
         val assembled = listOf(preset, voiceBlock, instructionsBlock, memoryBlock)
             .filter { it.isNotEmpty() }
             .joinToString("\n\n")
-        return TokenEstimate.clamp(assembled, MAX_SYSTEM_TOKENS)
+        return TokenEstimate.clamp(assembled, ceiling)
     }
 
     /**
@@ -1560,8 +1622,8 @@ class ChatRepository(
         // The question the document evidence is chosen for is the turn being sent: the user row
         // is written before the request is built, so the last user message IS the question.
         val question = entities.lastOrNull { it.role == "user" }?.content.orEmpty()
-        val isLocal = ProviderRegistry.getProvider(conversation.providerId)?.isLocal == true
-        val documentText = documentBlock(documents, question, isLocal)
+        val budget = budgetFor(conversation.providerId)
+        val documentText = documentBlock(documents, question, budget)
 
         // A chat outside a folder, in a folder with both files empty, and with no document must
         // send EXACTLY what 2.5.0 sent. Not nearly - exactly: this is the line that keeps the
@@ -1583,7 +1645,7 @@ class ChatRepository(
         // and a long style guide must not be able to squeeze out the contract being asked about.
         val assembled = listOfNotNull(
             if (project != null) {
-                assembleSystemText(preset, voice, project)
+                assembleSystemText(preset, voice, project, budget.system)
             } else {
                 listOf(preset, voice).filter { it.isNotBlank() }
                     .joinToString("\n\n").ifBlank { null }
@@ -1681,10 +1743,17 @@ class ChatRepository(
         if (!BuildConfig.DEBUG) return
         val system = messages.filter { it.role == "system" }
         val systemText = system.joinToString(" | ") { it.content.textContent() }
+        val provider = ProviderRegistry.getProvider(conversation.providerId)
+        // What is logged here is what the repository HANDS OVER. A provider with no system role
+        // folds that text into the first user turn on its way to the wire, so the line says so
+        // by name - sysTokens and voiceTokens keep counting the text that was really sent, and
+        // the provider logs the folded prompt itself under MaskanLlm.
+        val shapeName = if (provider?.foldsSystemPrompt == true) "gemma-folded" else shape
         android.util.Log.d(
             "MaskanCtx",
             "conv=" + conversation.id + " folder=" + conversation.folderId +
-                " provider=" + conversation.providerId + " shape=" + shape +
+                " provider=" + conversation.providerId + " shape=" + shapeName +
+                (provider?.contextTokens?.let { " window=" + it } ?: "") +
                 " msgs=" + messages.size + " systems=" + system.size +
                 " imgs=" + messages.count { it.content is MessageContent.WithImage } +
                 " sysTokens=" + TokenEstimate.of(systemText) +
@@ -1751,6 +1820,30 @@ class ChatRepository(
 
         /** The same, for a 4k-context model on the user's own machine. */
         const val MAX_DOCUMENT_TOKENS_LOCAL = 2000
+
+        // ── Deriving a budget from a model's real window (the on-device provider) ──
+        //
+        // Worked at 4,096: 819 reserved for the answer, 307 of headroom, 2,970 usable, of
+        // which 1,200 system, 1,000 document and the remaining ~770 history. See
+        // _build_2.6/patch63_window_budget.py for why each share is what it is.
+
+        /** Reserved for the model's own answer. A short Arabic reply runs 300-600 tokens. */
+        const val ANSWER_SHARE = 0.20
+
+        /**
+         * Held back for what we cannot count exactly: the prompt template's turn markers, and
+         * the gap between TokenEstimate and the model's own tokenizer. The tokenizer has the
+         * last word anyway - the on-device provider trims history against sizeInTokens - but a
+         * budget that needs the last word every time is a budget set too high.
+         */
+        const val HEADROOM_SHARE = 0.075
+
+        const val SYSTEM_SHARE = 0.40
+        const val DOCUMENT_SHARE = 0.34
+
+        /** Floors, so a hypothetically tiny window still produces a usable request. */
+        const val MIN_USABLE_TOKENS = 600
+        const val MIN_CHUNK_TOKENS = 200
 
         /** How many times one chunk is retried after a 429 before the pass stops and says so. */
         const val NOTES_MAX_RETRIES = 4

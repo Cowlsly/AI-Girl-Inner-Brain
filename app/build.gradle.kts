@@ -91,6 +91,20 @@ android {
         baseline = file("lint-baseline.xml")
     }
 
+    packaging {
+        jniLibs {
+            // The on-device engine's native library is 26.6 MB on arm64 and 108 MB across the
+            // four ABIs in the universal APK. Compressed in the APK it is 10.3 MB and 42 MB.
+            // AGP's default (uncompressed, mapped straight out of the APK) is the better
+            // runtime trade and the wrong download trade: the universal APK is what F-Droid
+            // serves and what people sideload, and 136 MB over mobile data does not finish.
+            // The cost, accepted once and stated here: the libraries are extracted at install,
+            // so roughly 26 MB more storage on arm64, a slower first launch, and Play marking
+            // the delivery as non-recommended.
+            useLegacyPackaging = true
+        }
+    }
+
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
@@ -185,6 +199,16 @@ dependencies {
     implementation(libs.pdfbox.android) {
         exclude(group = "org.bouncycastle")
     }
+
+    // MediaPipe LLM Inference - the on-device model (Apache 2.0; androidx.annotation, Guava and
+    // protobuf-javalite are its only transitive dependencies, and no Play Services). Almost all
+    // of its weight is one prebuilt native library per ABI, in the same shape as the SQLCipher
+    // AAR above; R8 shrinks the Java side to about 38 KB. The MODEL is not here and is never in
+    // the APK - it is downloaded, verified and deleted by the user (see ondevice/).
+    //
+    // Images on Gemma-3n would need com.google.mediapipe:tasks-core as well (MPImage lives
+    // there, not here) - another 11 MB native library per ABI. Held for 2.7.
+    implementation(libs.mediapipe.genai)
 }
 
 

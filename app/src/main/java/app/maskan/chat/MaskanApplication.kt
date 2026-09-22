@@ -128,6 +128,14 @@ class MaskanApplication : Application() {
 
     val imageStore by lazy { app.maskan.chat.util.ImageStore(this) }
 
+    // ── On-device model ───────────────────────────────────────────────
+
+    /**
+     * The one LlmInference in the process. Lazy: an install that never downloads a model never
+     * touches MediaPipe, and the native library is only mapped when something asks.
+     */
+    val llmEngine by lazy { app.maskan.chat.ondevice.LlmEngine(this) }
+
     // ── Video ─────────────────────────────────────────────────────────
 
     val videoJobClient by lazy { VideoJobClient(sharedOkHttpClient, json) }
@@ -210,6 +218,21 @@ class MaskanApplication : Application() {
             override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
             override fun onActivityDestroyed(activity: Activity) {}
         })
+    }
+
+    /**
+     * Give the model back when the system says it needs the memory.
+     *
+     * A loaded Gemma is most of a gigabyte of mapped weights. An app that keeps it while the
+     * user is in a map or a camera is an app the system kills, and a killed app loses the
+     * conversation it was in the middle of. Reloading costs seconds; being killed costs the
+     * chat.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            llmEngine.release()
+        }
     }
 
     override fun onCreate() {
