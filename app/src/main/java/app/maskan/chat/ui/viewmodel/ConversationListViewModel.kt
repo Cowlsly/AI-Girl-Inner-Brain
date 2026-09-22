@@ -144,7 +144,10 @@ class ConversationListViewModel(
 
     fun createNewConversation(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
-            val defaultProviderId = keyRepository.getDefaultProviderId() ?: "deepseek"
+            // Only reached before the user has ever picked a provider; see
+            // ProviderRegistry.getDefaultProvider for why this one.
+            val defaultProviderId = keyRepository.getDefaultProviderId()
+                ?: ProviderRegistry.getDefaultProvider().id
             // Use the model the user actually selected/typed for this provider; fall back to the
             // provider's default only if none was saved. (Previously this always used the provider
             // default — e.g. "llama3.2" for Ollama — so new chats ignored the user's chosen model

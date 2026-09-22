@@ -175,6 +175,8 @@ object ErrorMapper {
             msg.contains("unknown provider") -> context.getString(R.string.error_provider_not_found)
             msg.contains("no image model selected") -> context.getString(R.string.error_no_image_model)
             msg.contains("image generation unsupported") -> context.getString(R.string.error_image_unsupported)
+            msg.contains("ondevice model not downloaded") ->
+                context.getString(R.string.error_ondevice_no_model)
             msg.contains("api error") -> {
                 val detail = throwable.message
                     ?.substringAfter("API error: ")

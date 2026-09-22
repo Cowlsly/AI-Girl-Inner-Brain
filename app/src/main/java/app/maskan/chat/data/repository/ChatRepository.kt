@@ -18,6 +18,7 @@ import app.maskan.chat.data.remote.Message
 import app.maskan.chat.data.remote.MessageContent
 import app.maskan.chat.data.remote.VideoBackend
 import app.maskan.chat.data.remote.VideoJobClient
+import app.maskan.chat.data.remote.providers.OnDeviceProvider
 import app.maskan.chat.data.remote.providers.ProviderRegistry
 import app.maskan.chat.util.DocumentChunks
 import app.maskan.chat.util.DocumentExtract
@@ -560,6 +561,7 @@ class ChatRepository(
             userMessageId = saveMessage(conversationId, "user", userContent)
 
             val messages = buildMessageList(conversation, conversation.modelId ?: model)
+            noteVoiceDropIfNeeded(conversationId)
 
             val providerId = conversation.providerId
             val provider = ProviderRegistry.getProvider(providerId)
@@ -1075,6 +1077,7 @@ class ChatRepository(
     ) {
         val conversationId = conversation.id
         val messages = buildMessageList(conversation, conversation.modelId ?: model)
+        noteVoiceDropIfNeeded(conversationId)
 
         val providerId = conversation.providerId
         val provider = ProviderRegistry.getProvider(providerId)
@@ -1113,6 +1116,11 @@ class ChatRepository(
             val finalContent = fullContent.toString()
             if (finalContent.isBlank()) {
                 throw Exception("Empty response from ${provider.displayName}")
+            }
+            // Counted here and not at the start: "after the tenth reply" means ten answers the
+            // user actually read, not ten requests, half of which may have failed.
+            if (providerId == OnDeviceProvider.ID) {
+                preferenceRepository.bumpOnDeviceReplyCount()
             }
         } catch (e: Exception) {
             val current = messageDao.getMessagesForConversationOnce(conversationId)
@@ -1522,12 +1530,40 @@ class ChatRepository(
      * the ceiling leaves after the preset and the memory, and the whole is clamped again as a
      * backstop for the case where the memory alone is enormous.
      */
+    /**
+     * Write the "the voice was dropped" line into the transcript, once per conversation.
+     *
+     * Once, because it is a fact about this folder's instructions and not about this message:
+     * repeating it every turn would turn an explanation into nagging. It is stored as a KEY and
+     * localized where it is shown, for the same reason "New Chat" is - a stored sentence would
+     * stop being in the app's language the moment someone switched.
+     */
+    private suspend fun noteVoiceDropIfNeeded(conversationId: Long) {
+        if (!voiceWasDropped) return
+        voiceWasDropped = false
+        val already = messageDao.getMessagesForConversationOnce(conversationId)
+            .any { it.role == ROLE_NOTICE && it.content == NOTICE_VOICE_DROPPED }
+        if (already) return
+        saveMessage(conversationId, ROLE_NOTICE, NOTICE_VOICE_DROPPED)
+    }
+
+    /**
+     * Set by [assembleSystemText] when it drops the dialect voice to fit folder instructions.
+     *
+     * A field and not a return value because assembleSystemText is called from three request
+     * paths and threading a second value through all of them would touch far more than this
+     * deserves. It is read and cleared by the caller that writes the notice row, immediately
+     * after assembly, on the same coroutine.
+     */
+    private var voiceWasDropped = false
+
     private fun assembleSystemText(
         preset: String,
         voice: String,
         project: ProjectText,
         ceiling: Int
     ): String {
+        voiceWasDropped = false
         val memoryBlock = if (project.memory.isEmpty()) {
             ""
         } else {
@@ -1545,6 +1581,11 @@ class ChatRepository(
         ) {
             voiceBlock = ""
             keptTokens = TokenEstimate.of(preset) + TokenEstimate.of(memoryBlock)
+            // Something the user chose was silently not sent. With the on-device provider back
+            // the ceiling is the window-derived 1,200 again, so this fires on ordinary folders
+            // rather than only on enormous ones, and a dialect that stops working with no
+            // explanation reads as the setting being broken.
+            voiceWasDropped = true
         }
         val budget = (ceiling - keptTokens).coerceAtLeast(0)
         val instructionsBlock = if (project.instructions.isEmpty()) {
@@ -1613,7 +1654,12 @@ class ChatRepository(
         }
 
         val systemMessages = messages.filter { it.role == "system" }
-        val nonSystemMessages = messages.filter { it.role != "system" }
+        // A notice row is written FOR the reader and is never sent: it describes what the app
+        // did to their request, which is not a turn in the conversation and would read to a
+        // model as the user talking about themselves in the third person.
+        val nonSystemMessages = messages.filter {
+            it.role != "system" && it.role != ROLE_NOTICE
+        }
         val recentMessages = nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
 
         val project = projectText(conversation)
@@ -1748,7 +1794,7 @@ class ChatRepository(
         // folds that text into the first user turn on its way to the wire, so the line says so
         // by name - sysTokens and voiceTokens keep counting the text that was really sent, and
         // the provider logs the folded prompt itself under MaskanLlm.
-        val shapeName = if (provider?.foldsSystemPrompt == true) "gemma-folded" else shape
+        val shapeName = provider?.promptShapeName ?: shape
         android.util.Log.d(
             "MaskanCtx",
             "conv=" + conversation.id + " folder=" + conversation.folderId +
@@ -1766,6 +1812,19 @@ class ChatRepository(
     }
 
     companion object {
+        /**
+         * A row that is shown to the reader and sent to nobody.
+         *
+         * The app occasionally does something to a request that the user would otherwise only
+         * notice as the app being broken - dropping the dialect voice to fit a long set of
+         * folder instructions is the first of them. A row says so, in the place they are
+         * already looking.
+         */
+        const val ROLE_NOTICE = "notice"
+
+        /** Stored in the row; localized at the point it is drawn. See noteVoiceDropIfNeeded. */
+        const val NOTICE_VOICE_DROPPED = "voice_dropped"
+
         /**
          * The title a chat is born with, stored in English in every install.
          *

@@ -76,7 +76,9 @@ class MaskanApplication : Application() {
         encodeDefaults = true
     }
 
-    private val sharedOkHttpClient by lazy {
+    // Not private since session 6: the model download borrows it and widens the timeouts,
+    // so one connection pool and one set of TLS settings serve the whole app.
+    val sharedOkHttpClient by lazy {
         OkHttpClient.Builder()
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
@@ -128,6 +130,13 @@ class MaskanApplication : Application() {
 
     val imageStore by lazy { app.maskan.chat.util.ImageStore(this) }
 
+    // ── On-device model ─────────────────────────────────
+
+    /**
+     * The one LlmInference in the process. Lazy: an install that never downloads a model never
+     * touches MediaPipe, and the native library is only mapped when something asks.
+     */
+    val llmEngine by lazy { app.maskan.chat.ondevice.LlmEngine(this) }
 
     // ── Video ─────────────────────────────────────────────────────────
 
@@ -213,6 +222,21 @@ class MaskanApplication : Application() {
         })
     }
 
+    /**
+     * Give the model back when the system says it needs the memory.
+     *
+     * A loaded model is one and a half gigabytes of mapped weights. An app that keeps it while
+     * the user is in a map or a camera is an app the system kills, and a killed app loses the
+     * conversation it was in the middle of. Reloading costs a second; being killed costs the
+     * chat.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            llmEngine.release()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         trackForeground()
@@ -279,6 +303,9 @@ class MaskanApplication : Application() {
     }
 
     private fun registerProviders() {
+        // First, because the provider list is drawn in this order and this is the only entry
+        // someone with no API key can do anything with.
+        registerOnDeviceProvider()
         for (config in ProviderConfigs.ALL_OPENAI_COMPATIBLE) {
             val service = createOpenAiService(config.baseUrl)
             val provider = OpenAiCompatibleProvider(
@@ -301,6 +328,29 @@ class MaskanApplication : Application() {
         registerAnthropicProvider()
         registerGeminiProvider()
         registerLocalProviders()
+    }
+
+    /**
+     * The on-device provider is registered whether or not a model is downloaded.
+     *
+     * That is the point: picking it with nothing installed is what opens the download card,
+     * and a provider that vanished when its file was deleted would take the card with it. The
+     * ENGINE is still lazy, so an install that never downloads anything never maps the native
+     * library.
+     */
+    private fun registerOnDeviceProvider() {
+        ProviderRegistry.register(
+            app.maskan.chat.data.remote.providers.OnDeviceProvider(
+                context = this,
+                engine = llmEngine,
+                config = ProviderConfigs.ONDEVICE
+            )
+        )
+    }
+
+    /** Starts, watches and undoes the model download. See ModelDownloadManager. */
+    val modelDownloads by lazy {
+        app.maskan.chat.ondevice.ModelDownloadManager(this, llmEngine)
     }
 
     private fun registerAnthropicProvider() {

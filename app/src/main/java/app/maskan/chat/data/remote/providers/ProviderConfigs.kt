@@ -219,6 +219,30 @@ object ProviderConfigs {
         instructionsAr = "ثبّت LM Studio من lmstudio.ai على جهازك.\nحمّل نموذجاً وشغّل الخادم المحلي.\nاعثر على عنوان IP المحلي لجهازك.\nأدخل الرابط أدناه (مثلاً http://192.168.1.50:1234).\nلا حاجة لمفتاح API — اترك حقل المفتاح فارغاً.\nاكتب اسم النموذج في حقل النموذج (تحقق من LM Studio للاسم الدقيق)."
     )
 
+    /**
+     * The built-in free AI: a model on the user's own phone, no key and no server of ours.
+     *
+     * The model is named, and so is who made it and under what licence, everywhere it appears -
+     * here, on the download card and in About. It is not our model and presenting it as one
+     * would be the single most dishonest thing this app could do.
+     */
+    val ONDEVICE = ProviderConfig(
+        id = "ondevice",
+        taglineEn = "Runs on your phone. Free, works offline, and nothing leaves the device.",
+        taglineAr = "\u064a\u0639\u0645\u0644 \u0639\u0644\u0649 \u0647\u0627\u062a\u0641\u0643. \u0645\u062c\u0627\u0646\u064a\u060c \u0648\u064a\u0639\u0645\u0644 \u062f\u0648\u0646 \u0625\u0646\u062a\u0631\u0646\u062a\u060c \u0648\u0644\u0627 \u064a\u063a\u0627\u062f\u0631 \u0634\u064a\u0621 \u0627\u0644\u062c\u0647\u0627\u0632.",
+        displayName = "On-device",
+        nameAr = "\u0639\u0644\u0649 \u0627\u0644\u062c\u0647\u0627\u0632",
+        baseUrl = "",
+        isLocal = true,
+        models = listOf("qwen2.5-1.5b-instruct-q8-ekv4096"),
+        defaultModel = "qwen2.5-1.5b-instruct-q8-ekv4096",
+        keyAcquisitionUrl = "",
+        pricingInfo = "Free - no key, no account, no server",
+        pricingInfoAr = "\u0645\u062c\u0627\u0646\u064a - \u062f\u0648\u0646 \u0645\u0641\u062a\u0627\u062d \u0623\u0648 \u062d\u0633\u0627\u0628 \u0623\u0648 \u062e\u0627\u062f\u0645",
+        instructionsEn = "No key is needed. Download the model once, then it works offline.",
+        instructionsAr = "\u0644\u0627 \u064a\u0644\u0632\u0645 \u0645\u0641\u062a\u0627\u062d. \u0646\u0632\u0651\u0644 \u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0645\u0631\u0629 \u0648\u0627\u062d\u062f\u0629\u060c \u062b\u0645 \u064a\u0639\u0645\u0644 \u062f\u0648\u0646 \u0625\u0646\u062a\u0631\u0646\u062a."
+    )
+
     val CUSTOM = ProviderConfig(
         id = "custom",
         taglineEn = "Any server that speaks the OpenAI API.",
@@ -242,5 +266,10 @@ object ProviderConfigs {
 
     val ALL_LOCAL = listOf(OLLAMA, LM_STUDIO, CUSTOM)
 
-    val ALL = ALL_OPENAI_COMPATIBLE + ANTHROPIC + GEMINI + ALL_LOCAL
+    // ONDEVICE is NOT in ALL_LOCAL: that list is what registerLocalProviders() builds
+    // LocalProvider instances from, and this one has no base URL and no HTTP at all.
+    //
+    // FIRST, not last: it is the only entry that needs no API key, so it is the only one a
+    // new user with nothing can act on, and it was behind a scroll.
+    val ALL = listOf(ONDEVICE) + ALL_OPENAI_COMPATIBLE + ANTHROPIC + GEMINI + ALL_LOCAL
 }

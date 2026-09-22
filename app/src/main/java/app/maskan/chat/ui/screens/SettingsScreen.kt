@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import app.maskan.chat.R
 import app.maskan.chat.data.local.isAppArabic
 import app.maskan.chat.data.model.Dialect
+import app.maskan.chat.data.remote.providers.OnDeviceProvider
 import app.maskan.chat.ui.viewmodel.SettingsViewModel
 import app.maskan.chat.ui.viewmodel.TestConnectionState
 import app.maskan.chat.ui.viewmodel.FetchModelsState
@@ -269,201 +270,209 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // API Key Section
-            Text(
-                text = stringResource(R.string.api_key_section),
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+            // A provider with nothing to have a key WITH gets the download card instead
+            // of the key field. Picking `ondevice` with no model installed is how someone
+            // reaches the card in the first place, which is why the provider stays in the
+            // list whether or not the file is there.
+            if (selectedProvider.id == OnDeviceProvider.ID) {
+                OnDeviceCard(onAddKeyInstead = { providerExpanded = true })
+            } else {
+                // API Key Section
+                Text(
+                    text = stringResource(R.string.api_key_section),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
-            if (apiKey.isBlank() && !selectedProvider.supportsCustomBaseUrl) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.maskanColors.skyBlue.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Info,
-                        contentDescription = stringResource(R.string.a11y_api_key_instructions),
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                if (apiKey.isBlank() && !selectedProvider.supportsCustomBaseUrl) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.maskanColors.skyBlue.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Info,
+                            contentDescription = stringResource(R.string.a11y_api_key_instructions),
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(
+                                R.string.api_key_hint_banner_provider,
+                                if (isArabic) selectedProvider.nameAr else selectedProvider.displayName,
+                                selectedProvider.keyAcquisitionUrl
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { viewModel.updateApiKey(it) },
+                    label = { Text(stringResource(R.string.api_key_label, if (isArabic) selectedProvider.nameAr else selectedProvider.displayName)) },
+                    placeholder = { Text(stringResource(R.string.api_key_placeholder)) },
+                    visualTransformation = if (isKeyVisible)
+                        VisualTransformation.None
+                    else
+                        PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Lock,
+                            contentDescription = stringResource(R.string.a11y_api_key_secured),
+                            tint = MaterialTheme.maskanColors.mintGreen,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        TextButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                            Text(if (isKeyVisible) stringResource(R.string.hide_key) else stringResource(R.string.show_key))
+                        }
+                    }
+                )
+                if (selectedProvider.supportsCustomBaseUrl) {
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = stringResource(
-                            R.string.api_key_hint_banner_provider,
-                            if (isArabic) selectedProvider.nameAr else selectedProvider.displayName,
-                            selectedProvider.keyAcquisitionUrl
-                        ),
+                        text = stringResource(R.string.api_key_optional_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { viewModel.updateApiKey(it) },
-                label = { Text(stringResource(R.string.api_key_label, if (isArabic) selectedProvider.nameAr else selectedProvider.displayName)) },
-                placeholder = { Text(stringResource(R.string.api_key_placeholder)) },
-                visualTransformation = if (isKeyVisible)
-                    VisualTransformation.None
-                else
-                    PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.Lock,
-                        contentDescription = stringResource(R.string.a11y_api_key_secured),
-                        tint = MaterialTheme.maskanColors.mintGreen,
-                        modifier = Modifier.size(20.dp)
-                    )
-                },
-                trailingIcon = {
-                    TextButton(onClick = { isKeyVisible = !isKeyVisible }) {
-                        Text(if (isKeyVisible) stringResource(R.string.hide_key) else stringResource(R.string.show_key))
-                    }
-                }
-            )
-            if (selectedProvider.supportsCustomBaseUrl) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = stringResource(R.string.api_key_optional_hint),
+                    text = stringResource(R.string.settings_encrypted_caption),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.settings_encrypted_caption),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(
-                onClick = { viewModel.saveApiKey() },
-                enabled = apiKey.isNotBlank() || selectedProvider.supportsCustomBaseUrl
-            ) {
-                Text(stringResource(R.string.save_key_button))
-            }
-            if (isSaved) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = stringResource(R.string.key_saved_confirmation),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(
-                onClick = { viewModel.testConnection() },
-                // A stored key stays stored: gating this on isSaved (a per-session flag) meant
-                // re-tapping Save Key after every app start just to enable the test.
-                enabled = (apiKey.isNotBlank() || selectedProvider.supportsCustomBaseUrl) &&
-                    testState !is TestConnectionState.Testing
-            ) {
-                if (testState is TestConnectionState.Testing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.saveApiKey() },
+                    enabled = apiKey.isNotBlank() || selectedProvider.supportsCustomBaseUrl
+                ) {
+                    Text(stringResource(R.string.save_key_button))
                 }
-                Text(stringResource(R.string.test_connection_button))
-            }
-
-            when (val state = testState) {
-                is TestConnectionState.Success -> {
+                if (isSaved) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            tint = MaterialTheme.maskanColors.success,
-                            modifier = Modifier.size(16.dp)
+                    Text(
+                        text = stringResource(R.string.key_saved_confirmation),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.testConnection() },
+                    // A stored key stays stored: gating this on isSaved (a per-session flag) meant
+                    // re-tapping Save Key after every app start just to enable the test.
+                    enabled = (apiKey.isNotBlank() || selectedProvider.supportsCustomBaseUrl) &&
+                        testState !is TestConnectionState.Testing
+                ) {
+                    if (testState is TestConnectionState.Testing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(stringResource(R.string.test_connection_button))
+                }
+
+                when (val state = testState) {
+                    is TestConnectionState.Success -> {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.maskanColors.success,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = state.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.maskanColors.success
+                            )
+                        }
+                    }
+                    is TestConnectionState.Error -> {
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = state.message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.maskanColors.success
+                            color = MaterialTheme.colorScheme.error
                         )
                     }
+                    else -> {}
                 }
-                is TestConnectionState.Error -> {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = state.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                else -> {}
-            }
 
-            // "What can my key do?" - the report that answers in sentences what the badges
-            // cannot: what works with THIS key, what is free where that is knowable, whether
-            // this provider draws, and the live balance where one exists.
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(
-                onClick = { viewModel.runKeyReport() },
-                enabled = (apiKey.isNotBlank() || selectedProvider.supportsCustomBaseUrl) &&
-                    state.keyReportState !is KeyReportState.Running
-            ) {
-                if (state.keyReportState is KeyReportState.Running) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
-                Text(stringResource(R.string.key_report_button))
-            }
-            when (val report = state.keyReportState) {
-                is KeyReportState.Running -> {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.key_report_running),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                is KeyReportState.Ready -> {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.maskanColors.warmPeach.copy(alpha = 0.35f)
+                // "What can my key do?" - the report that answers in sentences what the badges
+                // cannot: what works with THIS key, what is free where that is knowable, whether
+                // this provider draws, and the live balance where one exists.
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.runKeyReport() },
+                    enabled = (apiKey.isNotBlank() || selectedProvider.supportsCustomBaseUrl) &&
+                        state.keyReportState !is KeyReportState.Running
+                ) {
+                    if (state.keyReportState is KeyReportState.Running) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
                         )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(stringResource(R.string.key_report_button))
+                }
+                when (val report = state.keyReportState) {
+                    is KeyReportState.Running -> {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.key_report_running),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    is KeyReportState.Ready -> {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.maskanColors.warmPeach.copy(alpha = 0.35f)
+                            )
                         ) {
-                            report.lines.forEach { line ->
-                                Text(
-                                    text = line,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                report.lines.forEach { line ->
+                                    Text(
+                                        text = line,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
                             }
                         }
                     }
+                    is KeyReportState.Error -> {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = report.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    else -> {}
                 }
-                is KeyReportState.Error -> {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = report.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                else -> {}
             }
 
             // Server URL section (local/custom providers only)

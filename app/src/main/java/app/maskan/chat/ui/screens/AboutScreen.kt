@@ -36,6 +36,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.maskan.chat.R
+import app.maskan.chat.ondevice.ModelCatalog
 import app.maskan.chat.ui.theme.maskanColors
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,6 +112,32 @@ fun AboutScreen(
             SecurityBullet(stringResource(R.string.about_security_network_locked))
             SecurityBullet(stringResource(R.string.about_security_no_tracking))
             SecurityBullet(stringResource(R.string.about_security_foss))
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // The third place the model is named, and the one that outlives the download card.
+            // Someone who wants to know what is answering them, who made it and under what
+            // terms should not have to remember a screen they saw once.
+            Text(
+                text = stringResource(R.string.ondevice_about_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(
+                    R.string.ondevice_about_body,
+                    ModelCatalog.DEFAULT.displayName,
+                    ModelCatalog.DEFAULT.maker,
+                    ModelCatalog.DEFAULT.licence
+                ),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            TextButton(onClick = {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(ModelCatalog.DEFAULT.licenceUrl))
+                context.startActivity(intent)
+            }) {
+                Text(ModelCatalog.DEFAULT.licence)
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 

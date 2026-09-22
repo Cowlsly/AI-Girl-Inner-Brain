@@ -5,8 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import app.maskan.chat.MaskanApplication
-import app.maskan.chat.ondevice.GemmaPrompt
-import app.maskan.chat.ondevice.LlmEngine
+import app.maskan.chat.ondevice.LocalPrompt
 import app.maskan.chat.ondevice.ModelCatalog
 import app.maskan.chat.util.TokenEstimate
 import java.io.File
@@ -48,14 +47,25 @@ class LlmProbeReceiver : BroadcastReceiver() {
             ?.let { String(android.util.Base64.decode(it, android.util.Base64.DEFAULT), Charsets.UTF_8) }
             ?: intent.getStringExtra("prompt")
             ?: DEFAULT_PROMPT
+        // --es sysb64 <base64 utf-8>: the system text this request carries. The real request
+        // an Arabic user sends is 413 tokens of MSA voice before their question, and a probe
+        // that can only send a bare prompt cannot measure the thing that ships.
+        val system = intent.getStringExtra("sysb64")
+            ?.let { String(android.util.Base64.decode(it, android.util.Base64.DEFAULT), Charsets.UTF_8) }
         val fileName = intent.getStringExtra("file")
         val maxTokens = intent.getIntExtra("max", 0)
 
-        // By catalogue entry, not by file name alone: the entry carries the turn markers that
-        // file declares, and a 3n bundle driven with Gemma 3's markers is a prompt with no turn
-        // structure - it answers anyway, which is exactly why it has to be got right here.
-        var model = fileName?.let { ModelCatalog.byFileName(it) }
-            ?: ModelCatalog.GEMMA_3_1B
+        // By catalogue ENTRY, never by file name alone: the entry carries the turn markers,
+        // the role names and whether the file has a system role, and driving one family's file
+        // with the other's shape is a prompt with no turn structure. It answers anyway - Qwen
+        // driven as Gemma answered three Arabic prompts in Chinese - which is exactly why the
+        // entry is chosen here and only the path is overridden.
+        //
+        //   --es model <catalogue id>   which entry's shape to use (default: the shipping one)
+        //   --es file  <name>           which file in files/models/ to read
+        var model = intent.getStringExtra("model")?.let { ModelCatalog.byId(it) }
+            ?: fileName?.let { ModelCatalog.byFileName(it) }
+            ?: ModelCatalog.DEFAULT
         if (fileName != null && model.fileName != fileName) model = model.copy(fileName = fileName)
         if (maxTokens > 0) model = model.copy(contextTokens = maxTokens)
         intent.getStringExtra("backend")?.let { model = model.copy(backend = it) }
@@ -68,7 +78,7 @@ class LlmProbeReceiver : BroadcastReceiver() {
         Log.d(TAG, "probe file=" + model.fileName + " bytes=" + file.length() +
             " window=" + model.contextTokens)
 
-        val engine = engineFor(app)
+        val engine = app.llmEngine
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val loadStart = System.currentTimeMillis()
             try {
@@ -84,13 +94,11 @@ class LlmProbeReceiver : BroadcastReceiver() {
             val genStart = System.currentTimeMillis()
             var firstAt = 0L
             try {
-                // No system text and one user turn: the harness measures the engine, and the
-                // request a real user sends - voice, preset, folder, document - is measured
-                // through the app itself once OnDeviceProvider exists.
+                // One user turn, and whatever system text --es sysb64 carried.
                 engine.generate(
                     model,
-                    null,
-                    listOf(GemmaPrompt.Turn("user", prompt))
+                    system,
+                    listOf(LocalPrompt.Turn("user", prompt))
                 ).collect { piece ->
                     if (firstAt == 0L) firstAt = System.currentTimeMillis()
                     answer.append(piece)
@@ -123,18 +131,5 @@ class LlmProbeReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "MaskanLlmProbe"
         private const val DEFAULT_PROMPT = "Say OK."
-
-        /**
-         * The one engine, held here rather than on the Application.
-         *
-         * On-device generation is cut from 2.6.0 and MediaPipe is a debug-only dependency, so
-         * nothing in the shipped app may hold a model - not even a lazy field that is never
-         * touched. The probe is the only thing that loads one now.
-         */
-        private var engine: LlmEngine? = null
-
-        @Synchronized
-        private fun engineFor(app: MaskanApplication): LlmEngine =
-            engine ?: LlmEngine(app).also { engine = it }
     }
 }

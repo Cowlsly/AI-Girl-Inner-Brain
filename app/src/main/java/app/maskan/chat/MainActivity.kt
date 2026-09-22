@@ -218,7 +218,8 @@ private fun AppNavigation(
                 // "Remember this" opens the file it just wrote to. The write is never silent.
                 onOpenProjectMemory = { folderId ->
                     navController.navigate(Routes.projectFileRoute(folderId, ProjectFile.MEMORY))
-                }
+                },
+                onNavigateToSettings = { navController.navigate(Routes.SETTINGS) }
             )
         }
 

@@ -24,6 +24,17 @@
 # APK delta; without this line session 6's release build would have failed on Linux instead.
 -dontwarn com.gemalto.jp2.**
 
+# MediaPipe's LLM option classes are generated with Google AutoValue, whose annotations have
+# CLASS retention and are never present at runtime. R8 still refuses to finish while it cannot
+# resolve them.
+#
+# Session 5 recorded R8 as "clean, no new -dontwarn" with this same dependency, and that was
+# true of that build and misleading about this one: nothing in src/main referenced the library
+# then, so R8 shrank it away before it ever read these classes. The moment the engine moved to
+# src/main and the provider called it, the release build failed. Worth remembering as a shape:
+# a dependency measured while unreachable has not been measured.
+-dontwarn com.google.auto.value.**
+
 # Keep Retrofit interfaces
 -keep,allowobfuscation interface app.maskan.chat.data.remote.OpenAiCompatibleService
 -keep,allowobfuscation interface app.maskan.chat.data.remote.AnthropicService

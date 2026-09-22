@@ -75,6 +75,16 @@ interface AiProvider {
      */
     val foldsSystemPrompt: Boolean get() = false
 
+    /**
+     * What to call the wire shape of this provider's prompt in a log line, or null for the
+     * ordinary chat-completions shape every cloud provider uses.
+     *
+     * Named per MODEL by the on-device provider, not per provider: it can be pointed at a file
+     * with a real system role (ChatML) or at one with none (Gemma), and a constant would make
+     * the debug line describe a request that was not sent.
+     */
+    val promptShapeName: String? get() = null
+
     val isLocal: Boolean get() = false
     val availableModels: List<String>
     val defaultModel: String

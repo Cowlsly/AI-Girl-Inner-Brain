@@ -21,9 +21,15 @@ import android.util.Log
 class ClipReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        val text = intent.getStringExtra(EXTRA_TEXT)
+        // --es b64 <base64 utf-8> for Arabic and Thai. `--es text` with either script from a
+        // WINDOWS host arrives mangled - session 6 sent a 33-character Arabic sentence and this
+        // receiver logged "set 2 chars", which looks like a working clipboard write and is not.
+        // LlmProbeReceiver hit the same wall; this is the same door.
+        val text = intent.getStringExtra(EXTRA_B64)
+            ?.let { String(android.util.Base64.decode(it, android.util.Base64.DEFAULT), Charsets.UTF_8) }
+            ?: intent.getStringExtra(EXTRA_TEXT)
         if (text == null) {
-            Log.w(TAG, "no --es text, nothing to put on the clipboard")
+            Log.w(TAG, "no --es text and no --es b64, nothing to put on the clipboard")
             return
         }
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -42,5 +48,6 @@ class ClipReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "MaskanDebugClip"
         private const val EXTRA_TEXT = "text"
+        private const val EXTRA_B64 = "b64"
     }
 }

@@ -133,7 +133,10 @@ import app.maskan.chat.data.local.localizedName
 import app.maskan.chat.data.remote.providers.ProviderRegistry
 import app.maskan.chat.data.repository.PreferenceRepository
 import app.maskan.chat.ui.theme.maskanColors
+import androidx.compose.ui.text.style.TextAlign
+import app.maskan.chat.data.remote.providers.OnDeviceProvider
 import app.maskan.chat.data.repository.ChatRepository
+import app.maskan.chat.ondevice.LlmEngine
 import app.maskan.chat.data.repository.ExportFormat
 import app.maskan.chat.ui.viewmodel.ChatViewModel
 import app.maskan.chat.ui.viewmodel.PendingMessageAction
@@ -141,6 +144,15 @@ import app.maskan.chat.ui.viewmodel.ProjectFilesViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * How many on-device answers before the "add your own key" card appears, once.
+ *
+ * Ten is plan §3.3's number and it is the right shape: enough use to have formed an opinion
+ * about the small model, few enough that the suggestion still helps rather than arriving after
+ * someone has already given up.
+ */
+private const val ONDEVICE_NUDGE_AFTER = 10
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -150,7 +162,9 @@ fun ChatScreen(
     preferenceRepository: PreferenceRepository,
     onNavigateBack: () -> Unit,
     /** Where a remembered fact was just written: the folder's memory, or the shared file. */
-    onOpenProjectMemory: (Long) -> Unit = {}
+    onOpenProjectMemory: (Long) -> Unit = {},
+    /** Where "Upgrade" on the on-device header line goes. See disclosure 2 of 3. */
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var inputText by rememberSaveable { mutableStateOf("") }
@@ -163,9 +177,20 @@ fun ChatScreen(
     var showPresetPicker by remember { mutableStateOf(false) }
     var showRenameDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    // Disclosure 3 of 3. Dismissed once is dismissed for good - that is the whole of the ask,
+    // and a card that comes back is an advertisement.
+    var nudgeDismissed by rememberSaveable {
+        mutableStateOf(preferenceRepository.isOnDeviceNudgeDismissed())
+    }
 
     val context = LocalContext.current
     val app = context.applicationContext as MaskanApplication
+    // Loading 1.6 GB takes about a second warm and a good deal longer cold, and until the
+    // first token arrives an empty bubble is indistinguishable from a hang. The engine is the
+    // only thing that knows which of the two is happening, so the screen asks it rather than
+    // guessing from a timer.
+    val engineState by app.llmEngine.state.collectAsState()
+    val modelLoading = engineState is LlmEngine.State.Loading
     val tts = remember { mutableStateOf<TextToSpeech?>(null) }
     var ttsReady by remember { mutableStateOf(false) }
     var speakingMessageId by remember { mutableStateOf<Long?>(null) }
@@ -391,8 +416,10 @@ fun ChatScreen(
     // Derived from the collected state, not read from the ViewModel: a plain function call
     // would be invisible to Compose and the button would keep whichever shape it was first
     // drawn with.
+    // lastOrNull { not a notice }: a notice row written between the question and the answer
+    // would otherwise make the composer think the turn was already taken.
     val awaitingReply = !uiState.isLoading && !uiState.isStreaming &&
-        visibleMessages.lastOrNull()?.role == "user"
+        visibleMessages.lastOrNull { it.role != ChatRepository.ROLE_NOTICE }?.role == "user"
     val speakButtonShown = viewModel.speakButtonShown()
 
     // The list is reverseLayout = true, so the newest message is index 0 and the list is anchored
@@ -645,6 +672,38 @@ fun ChatScreen(
                 // It used to appear only for a named preset, which meant a chat with a custom
                 // prompt showed nothing at all - and there was no way to change the prompt of a
                 // chat that had started, only to start a different chat.
+                // Disclosure 2 of 3, and the only one that is always on screen: whoever is
+                // reading an on-device answer can see, without looking anything up, that it
+                // came from a basic model and that there is a better one a tap away.
+                // The SAME gate as the preset strip below, and for the same two reasons. The
+                // picker is a height-filling grid sized to fit with no scroll (PresetPicker.kt),
+                // so any row added to the header comes straight out of the cards and clips their
+                // Arabic descriptions - which is what the device showed. `presetSelected` covers
+                // the first-run picker, `showPresetPicker` the one raised over an existing chat.
+                if (uiState.selectedProviderId == OnDeviceProvider.ID &&
+                    uiState.presetSelected && !showPresetPicker
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.maskanColors.softLavender)
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ondevice_header_basic),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = stringResource(R.string.ondevice_header_upgrade),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { onNavigateToSettings() }
+                        )
+                    }
+                }
                 if (uiState.presetSelected && !showPresetPicker) {
                     val presetLabel = when (uiState.presetId) {
                         ChatRepository.PRESET_CUSTOM -> stringResource(R.string.preset_custom_label)
@@ -722,6 +781,49 @@ fun ChatScreen(
             // which is the one thing the screen is open to prevent.
             if (uiState.presetSelected && !showPresetPicker) {
                 Column(modifier = Modifier.navigationBarsPadding().imePadding()) {
+                    // Disclosure 3 of 3: once per install, after the tenth on-device answer.
+                    // Above the composer rather than in the transcript, because it is about the
+                    // app and not about anything that was said.
+                    if (!nudgeDismissed &&
+                        uiState.selectedProviderId == OnDeviceProvider.ID &&
+                        preferenceRepository.onDeviceReplyCount() >= ONDEVICE_NUDGE_AFTER
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = stringResource(R.string.ondevice_nudge),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.End,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    TextButton(onClick = {
+                                        preferenceRepository.dismissOnDeviceNudge()
+                                        nudgeDismissed = true
+                                    }) {
+                                        Text(stringResource(R.string.ondevice_nudge_dismiss))
+                                    }
+                                    TextButton(onClick = {
+                                        // Dismissed on the way out too: someone who went to add
+                                        // a key has answered the question the card was asking.
+                                        preferenceRepository.dismissOnDeviceNudge()
+                                        nudgeDismissed = true
+                                        onNavigateToSettings()
+                                    }) {
+                                        Text(stringResource(R.string.ondevice_nudge_add_key))
+                                    }
+                                }
+                            }
+                        }
+                    }
                     uiState.pendingImageBytes?.let { bytes ->
                         ImagePreview(
                             imageBytes = bytes,
@@ -1028,6 +1130,24 @@ fun ChatScreen(
                     items = visibleMessages.asReversed(),
                     key = { it.id }
                 ) { message ->
+                    if (message.role == ChatRepository.ROLE_NOTICE) {
+                        // Centred, quiet, and not a bubble: it is the app talking about the
+                        // request, not either side of the conversation.
+                        Text(
+                            text = when (message.content) {
+                                ChatRepository.NOTICE_VOICE_DROPPED ->
+                                    stringResource(R.string.clamp_voice_dropped)
+                                else -> message.content
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 32.dp, vertical = 4.dp)
+                        )
+                        return@items
+                    }
                     val isLastMessage = message == visibleMessages.lastOrNull()
                     val busy = uiState.isLoading || uiState.isStreaming
                     val isActivelyStreaming = uiState.isStreaming && isLastMessage && message.role == "assistant"
@@ -1106,6 +1226,16 @@ fun ChatScreen(
                             null
                         }
                     )
+                    if (modelLoading && isLastMessage && message.role == "assistant" &&
+                        message.content.isBlank()
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ondevice_loading_model),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 12.dp)
+                        )
+                    }
                     uiState.documents
                         .filter { it.attachedMessageId == message.id }
                         .forEach { document ->

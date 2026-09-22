@@ -31,7 +31,7 @@ import kotlinx.coroutines.withContext
 /**
  * The one model in memory, and the only thing in the app that talks to MediaPipe.
  *
- * One instance, created lazily, never two: a Gemma `.task` is most of a gigabyte of mapped
+ * One instance, created lazily, never two: a `.task` is one and a half gigabytes of mapped
  * weights and a second copy is an out-of-memory kill. Generation is serialised on a mutex for
  * the same reason, which also makes "is the model busy" answerable.
  *
@@ -156,7 +156,7 @@ class LlmEngine(private val context: Context) {
     }
 
     /**
-     * Answer [turns], with [system] folded into the first user turn, one piece of text at a time.
+     * Answer [turns] with [system] applied the way [model] wants it, one piece of text at a time.
      *
      * The whole generation holds the mutex: the runtime is one engine with one session and a
      * second question arriving mid-answer would interleave two replies into one bubble.
@@ -171,7 +171,7 @@ class LlmEngine(private val context: Context) {
     fun generate(
         model: OnDeviceModel,
         system: String?,
-        turns: List<GemmaPrompt.Turn>
+        turns: List<LocalPrompt.Turn>
     ): Flow<String> = callbackFlow {
         idleTimer?.cancel()
         mutex.lock()
@@ -187,9 +187,11 @@ class LlmEngine(private val context: Context) {
             session = LlmInferenceSession.createFromOptions(
                 engine,
                 LlmInferenceSession.LlmInferenceSessionOptions.builder()
-                    .setTopK(TOP_K)
-                    .setTopP(TOP_P)
-                    .setTemperature(TEMPERATURE)
+                    // The model's own published sampling, not the other family's. See
+                    // OnDeviceModel.temperature.
+                    .setTopK(model.topK)
+                    .setTopP(model.topP)
+                    .setTemperature(model.temperature)
                     // MediaPipe's default seed is fixed, and a fixed seed makes the sampling
                     // above decorative: the same question returns the same answer, character
                     // for character, for the life of the install. The device showed it - three
@@ -219,17 +221,17 @@ class LlmEngine(private val context: Context) {
             )
             val counter = session
             val promptLimit = model.contextTokens - (model.contextTokens * ANSWER_SHARE).toInt()
-            val (prompt, promptTokens) = GemmaPrompt.trimToFit(
+            val (prompt, promptTokens) = LocalPrompt.trimToFit(
                 system = system,
                 turns = turns,
-                markers = GemmaPrompt.Markers(model.turnStart, model.turnEnd),
+                shape = model.promptShape,
                 limit = promptLimit,
                 countTokens = { runCatching { counter.sizeInTokens(it) }.getOrDefault(-1) }
             )
             if (BuildConfig.DEBUG) {
                 Log.d(
                     TAG,
-                    "prompt shape=gemma-folded turnsIn=" + turns.size +
+                    "prompt shape=" + model.promptShapeName + " turnsIn=" + turns.size +
                         " promptTokens=" + promptTokens + " limit=" + promptLimit +
                         " window=" + model.contextTokens
                 )
@@ -332,10 +334,24 @@ class LlmEngine(private val context: Context) {
         }
     }
 
-    /** Called from onTrimMemory and when the user deletes the file underneath us. */
+    /** Called from onTrimMemory. Fire and forget: nothing is waiting on the memory. */
     fun release() {
         idleTimer?.cancel()
         scope.launch { mutex.withLock { releaseLocked() } }
+    }
+
+    /**
+     * Let the model go, and do not return until it is gone.
+     *
+     * The deleting path needs this one. A `.task` that is still mapped keeps its inode alive
+     * after the file is unlinked, so the disk space does not come back - on the device, PSS
+     * stayed at 2.8 GB and df did not move while the card said 1.6 GB had been returned.
+     * Waiting also means a generation in flight finishes first rather than being torn out from
+     * under the runtime, because this takes the same mutex.
+     */
+    suspend fun releaseAndWait() {
+        idleTimer?.cancel()
+        mutex.withLock { releaseLocked() }
     }
 
     private fun releaseLocked() {
@@ -353,12 +369,6 @@ class LlmEngine(private val context: Context) {
 
         /** Five minutes, per plan §3.2. */
         private const val IDLE_RELEASE_MS = 5 * 60 * 1000L
-
-        // Gemma's own defaults. Not exposed: a 1B model given a hot temperature invents, and
-        // the one thing this model must not do is sound confident about facts it does not have.
-        private const val TOP_K = 40
-        private const val TOP_P = 0.95f
-        private const val TEMPERATURE = 0.8f
 
         /**
          * The share of the window the answer may have, and therefore the share the prompt may
