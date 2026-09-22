@@ -1507,6 +1507,10 @@ class ChatRepository(
      */
     private fun dialectVoice(): String = when (effectiveLanguage()) {
         "ar" -> DialectVoice.forDialect(preferenceRepository.getDefaultDialect())
+        // Thai has no dialect to choose, so there is nothing in Settings for it: answering in
+        // Thai IS the choice. The guide behind it is about writing Thai that a Thai reader does
+        // not wince at, which is mostly about where the spaces go.
+        "th" -> DialectVoice.forThai()
         else -> ""
     }
 
