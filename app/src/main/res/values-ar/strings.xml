@@ -476,4 +476,6 @@
     <string name="ondevice_about_title">النموذج على الجهاز</string>
     <string name="ondevice_about_body">%1$s، من صنع %2$s وبرخصة %3$s. ليس من صنع مسكن. يعمل بالكامل على هذا الهاتف: دون حساب، ودون خادم لنا، ولا يغادر أي شيء من محادثاتك الجهاز.</string>
     <string name="clamp_voice_dropped">تعليمات المجلد طويلة، لذلك تُركت لهجة الرد خارج هذه المحادثة لإفساح المجال لها.</string>
+    <string name="ondevice_server_refused">لم يرسل الخادم الملف (HTTP %1$s). اتصالك سليم — عنوان التنزيل خطأ، أو الملف غير منشور بعد.</string>
+    <string name="ondevice_retrying">انقطع الاتصال — تُعاد المحاولة…</string>
 </resources>

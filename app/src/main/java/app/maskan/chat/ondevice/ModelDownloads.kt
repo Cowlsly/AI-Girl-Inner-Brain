@@ -45,11 +45,22 @@ object Formats {
 /** What the screen needs to know about a download in flight. */
 sealed class DownloadState {
     data object Idle : DownloadState()
-    data object Queued : DownloadState()
+    /**
+     * Enqueued and not yet running.
+     *
+     * [retrying] separates "has never run, so it is waiting for the network it was told to wait
+     * for" from "ran, failed on something transient, and is backing off". WorkManager reports
+     * both as ENQUEUED, and telling the second one it is waiting for Wi-Fi is a lie the user
+     * cannot act on.
+     */
+    data class Queued(val retrying: Boolean) : DownloadState()
     data class Running(val done: Long, val total: Long, val verifying: Boolean) : DownloadState()
     data object Installed : DownloadState()
-    /** [reason] is one of ModelDownloadWorker.REASON_*, or null when the worker never said. */
-    data class Failed(val reason: String?) : DownloadState()
+    /**
+     * [reason] is one of ModelDownloadWorker.REASON_*, or null when the worker never said.
+     * [httpCode] is set only for REASON_HTTP.
+     */
+    data class Failed(val reason: String?, val httpCode: Int = 0) : DownloadState()
 }
 
 /**
@@ -145,11 +156,11 @@ class ModelDownloadManager(
                     total = info.progress.getLong(ModelDownloadWorker.KEY_TOTAL, model.bytes),
                     verifying = info.progress.getBoolean(ModelDownloadWorker.KEY_VERIFYING, false)
                 )
-                WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> DownloadState.Queued
-                // A retry is a download waiting for the network to come back, not a failure.
-                // Showing it as one would send people to look for a problem that is a tunnel.
+                WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED ->
+                    DownloadState.Queued(retrying = info.runAttemptCount > 0)
                 WorkInfo.State.FAILED -> DownloadState.Failed(
-                    info.outputData.getString(ModelDownloadWorker.KEY_REASON)
+                    reason = info.outputData.getString(ModelDownloadWorker.KEY_REASON),
+                    httpCode = info.outputData.getInt(ModelDownloadWorker.KEY_HTTP_CODE, 0)
                 )
                 else -> DownloadState.Idle
             }

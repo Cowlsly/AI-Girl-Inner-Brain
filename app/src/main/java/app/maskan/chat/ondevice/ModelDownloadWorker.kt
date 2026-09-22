@@ -90,8 +90,18 @@ class ModelDownloadWorker(
             if (dest.exists()) dest.delete()
             if (!part.renameTo(dest)) return@withContext Result.failure(reason(REASON_RENAME))
             Result.success()
+        } catch (e: PermanentHttpException) {
+            // The server answered, and what it said was "no". Retrying cannot change that, and
+            // a download that retries forever shows as "waiting for the network" - which blames
+            // the user's connection for a file that is not there.
+            Result.failure(
+                workDataOf(
+                    KEY_REASON to REASON_HTTP,
+                    KEY_HTTP_CODE to e.code
+                )
+            )
         } catch (e: IOException) {
-            // A dropped connection is not a failure: the bytes on disk are kept and the next
+            // A dropped connection IS worth retrying: the bytes on disk are kept and the next
             // attempt resumes from them. Only a checksum mismatch throws work away.
             Result.retry()
         }
@@ -118,7 +128,17 @@ class ModelDownloadWorker(
             .build()
 
         client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP " + response.code)
+            if (!response.isSuccessful) {
+                // 408 and 429 are the two 4xx that genuinely mean "ask again later"; every
+                // other 4xx is the server saying the request itself is wrong, and no amount of
+                // waiting fixes a 404. 5xx falls through to the retrying branch.
+                if (response.code in 400..499 &&
+                    response.code != 408 && response.code != 429
+                ) {
+                    throw PermanentHttpException(response.code)
+                }
+                throw IOException("HTTP " + response.code)
+            }
             // 206 means the server honoured the range and we append. 200 means it did not, and
             // the body is the WHOLE file - appending it to what we have would produce a file of
             // the right length made of the wrong bytes for the first half.
@@ -240,6 +260,12 @@ class ModelDownloadWorker(
         const val KEY_VERIFYING = "verifying"
         const val KEY_REASON = "reason"
 
+        /** An HTTP status that will not change by being asked again. See the catch above. */
+        private class PermanentHttpException(val code: Int) : IOException("HTTP " + code)
+
+        const val KEY_HTTP_CODE = "httpCode"
+
+        const val REASON_HTTP = "http"
         const val REASON_CHECKSUM = "checksum"
         const val REASON_NO_SPACE = "space"
         const val REASON_RENAME = "rename"

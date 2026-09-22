@@ -188,7 +188,11 @@ fun OnDeviceCard(onAddKeyInstead: () -> Unit) {
 
                 is DownloadState.Queued -> {
                     Text(
-                        text = stringResource(R.string.ondevice_queued),
+                        text = if (s.retrying) {
+                            stringResource(R.string.ondevice_retrying)
+                        } else {
+                            stringResource(R.string.ondevice_queued)
+                        },
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(Modifier.height(8.dp))
@@ -207,6 +211,11 @@ fun OnDeviceCard(onAddKeyInstead: () -> Unit) {
                                     stringResource(
                                         R.string.ondevice_no_space,
                                         Formats.bytes(context, model.bytes)
+                                    )
+                                ModelDownloadWorker.REASON_HTTP ->
+                                    stringResource(
+                                        R.string.ondevice_server_refused,
+                                        s.httpCode.toString()
                                     )
                                 else -> stringResource(R.string.error_unknown)
                             },

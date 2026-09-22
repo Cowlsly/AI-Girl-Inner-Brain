@@ -476,4 +476,6 @@
     <string name="ondevice_about_title">On-device model</string>
     <string name="ondevice_about_body">%1$s, made by %2$s and licensed %3$s. It is not made by Maskan. It runs entirely on this phone: no account, no server of ours, and nothing about your chats leaves the device.</string>
     <string name="clamp_voice_dropped">Your folder instructions are long, so the dialect voice was left out of this conversation to make room for them.</string>
+    <string name="ondevice_server_refused">The server did not send the file (HTTP %1$s). Your connection is fine — the download address is wrong, or the file has not been published yet.</string>
+    <string name="ondevice_retrying">Connection lost — trying again…</string>
 </resources>
