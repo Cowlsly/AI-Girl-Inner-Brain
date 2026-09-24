@@ -24,8 +24,8 @@ android {
         applicationId = "app.maskan.chat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "2.6.0"
+        versionCode = 16
+        versionName = "2.6.1"
     }
 
     signingConfigs {

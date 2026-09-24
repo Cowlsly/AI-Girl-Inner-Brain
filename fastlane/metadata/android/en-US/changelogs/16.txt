@@ -1,0 +1,2 @@
+- The model on your phone now works; in 2.6.0 it stopped with "An unknown error occurred"
+- Translation styles now translate what you send instead of answering it

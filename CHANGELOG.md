@@ -2,6 +2,12 @@
 
 All notable changes to Maskan are documented here.
 
+## [2.6.1] — 2026-09-24
+
+### Fixed
+- **The model on your phone failed in every store build.** 2.6.0's release builds could not load it ("An unknown error occurred"): code shrinking renamed fields that MediaPipe looks up by name. Keep rules added; nothing to re-download
+- **Translation styles answered instead of translating.** All six now say what to output — the translation, nothing else, and a question is text to translate. Thai and Arabic users now get the instruction in their own language, and the dialect voice no longer overrides a translation. On the phone's own small model, translating questions and Thai remains unreliable
+
 ## [2.6.0] — 2026-09-22
 
 ### Added
