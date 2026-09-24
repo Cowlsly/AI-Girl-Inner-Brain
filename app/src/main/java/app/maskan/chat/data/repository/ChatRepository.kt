@@ -11,7 +11,9 @@ import app.maskan.chat.data.local.FolderDao
 import app.maskan.chat.data.local.FolderEntity
 import app.maskan.chat.data.local.MessageDao
 import app.maskan.chat.data.local.MessageEntity
+import app.maskan.chat.data.local.PresetCategory
 import app.maskan.chat.data.local.Presets
+import app.maskan.chat.data.local.systemPromptFor
 import app.maskan.chat.data.model.Dialect
 import app.maskan.chat.data.remote.ChatCompletionResponse
 import app.maskan.chat.data.remote.Message
@@ -565,8 +567,7 @@ class ChatRepository(
             if (conversation.systemPromptId != null && !hasSystemMessage) {
                 val preset = resolvePreset(conversation)
                 if (preset != null) {
-                    val isArabic = localeRepository.getLocale() == "ar"
-                    val systemContent = if (isArabic) preset.systemPromptAr else preset.systemPromptEn
+                    val systemContent = preset.systemPromptFor(effectiveLanguage())
                     if (systemContent.isNotBlank()) {
                         saveMessage(conversationId, "system", systemContent)
                     }
@@ -646,8 +647,7 @@ class ChatRepository(
         if (conversation.systemPromptId != null && !hasSystemMessage) {
             val preset = resolvePreset(conversation)
             if (preset != null) {
-                val isArabic = localeRepository.getLocale() == "ar"
-                val systemContent = if (isArabic) preset.systemPromptAr else preset.systemPromptEn
+                val systemContent = preset.systemPromptFor(effectiveLanguage())
                 if (systemContent.isNotBlank()) {
                     saveMessage(conversationId, "system", systemContent)
                 }
@@ -1298,9 +1298,7 @@ class ChatRepository(
             PRESET_NONE -> ""
             PRESET_CUSTOM -> customText.orEmpty().trim()
             else -> {
-                val preset = resolvePreset(conversation)
-                val isArabic = localeRepository.getLocale() == "ar"
-                preset?.let { if (isArabic) it.systemPromptAr else it.systemPromptEn }.orEmpty()
+                resolvePreset(conversation)?.systemPromptFor(effectiveLanguage()).orEmpty()
             }
         }
         val existing = messageDao.getMessagesForConversationOnce(conversationId)
@@ -1622,7 +1620,18 @@ class ChatRepository(
      * the guess the rest of the app already makes. An empty string is the normal answer for
      * an English install and for MSA, and it is what keeps the 2.5.0 request shape intact for
      * everyone who has never touched this setting.
+     *
+     * Not on a TRANSLATION preset. The Arabic voice ends "if the user writes in another language,
+     * understand the question and answer it in Arabic" - the exact opposite of Arabic → English,
+     * and the same failure the 2.6.1 preset rewrite fixes (answering instead of translating).
+     * English → Arabic carries its own dialect choice, so nothing is lost; on the phone it also
+     * saves reading ~430 tokens, about 20 seconds of prefill on Qwen.
      */
+    private fun dialectVoice(conversation: ConversationEntity): String {
+        if (resolvePreset(conversation)?.category == PresetCategory.TRANSLATION) return ""
+        return dialectVoice()
+    }
+
     private fun dialectVoice(): String = when (effectiveLanguage()) {
         "ar" -> DialectVoice.forDialect(preferenceRepository.getDefaultDialect())
         // Thai has no dialect to choose, so there is nothing in Settings for it: answering in
@@ -1668,17 +1677,21 @@ class ChatRepository(
             }
         }
 
-        val systemMessages = messages.filter { it.role == "system" }
+        val systemMessages = onDeviceTranslationSystem(conversation)
+            ?: messages.filter { it.role == "system" }
         // A notice row is written FOR the reader and is never sent: it describes what the app
         // did to their request, which is not a turn in the conversation and would read to a
         // model as the user talking about themselves in the third person.
         val nonSystemMessages = messages.filter {
             it.role != "system" && it.role != ROLE_NOTICE
         }
-        val recentMessages = nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
+        val recentMessages = withTranslationReminder(
+            conversation,
+            nonSystemMessages.takeLast(MAX_CONTEXT_MESSAGES)
+        )
 
         val project = projectText(conversation)
-        val voice = dialectVoice()
+        val voice = dialectVoice(conversation)
 
         // The question the document evidence is chosen for is the turn being sent: the user row
         // is written before the request is built, so the last user message IS the question.
@@ -1717,6 +1730,50 @@ class ChatRepository(
         val outgoing = listOf(Message(role = "system", text = assembled)) + recentMessages
         logContext(conversation, outgoing, if (documentText != null) "document" else "assembled")
         return outgoing
+    }
+
+    /**
+     * On the on-device model, a translation preset's system text goes out in ENGLISH whatever the
+     * app language, replacing the stored row (which stays in the app's language for cloud models).
+     *
+     * Measured on the Redmi, 4 runs each, Qwen2.5 1.5B: Thai → English with the Thai instruction
+     * never left Thai (0/8 replies in English); with the English one, 3 of 4 plain sentences came
+     * back as English translations. Arabic → English was 16/16 correct either way. A model this
+     * small follows English instructions best; users never see the instruction.
+     */
+    private fun onDeviceTranslationSystem(conversation: ConversationEntity): List<Message>? {
+        if (conversation.providerId != OnDeviceProvider.ID) return null
+        val preset = resolvePreset(conversation) ?: return null
+        if (preset.category != PresetCategory.TRANSLATION) return null
+        return listOf(Message(role = "system", text = preset.systemPromptFor("en")))
+    }
+
+    /**
+     * On the on-device model only, the last user turn of a translation-preset chat goes out with
+     * Presets.translationReminder in front of it. See that function for why; nothing is stored.
+     *
+     * A worked example (a question and its translation, sent ahead of the conversation) was tried
+     * and measured on the Redmi, 5 runs a variant: it turned Qwen 1.5B's answers into gibberish
+     * shaped like the example in 9 of 10 runs, at temperature 0.7 and 0.2 alike. Not shipped.
+     */
+    private fun withTranslationReminder(
+        conversation: ConversationEntity,
+        turns: List<Message>
+    ): List<Message> {
+        if (conversation.providerId != OnDeviceProvider.ID) return turns
+        // English whatever the app language: see onDeviceTranslationSystem.
+        val reminder = Presets.translationReminder(
+            conversation.systemPromptId,
+            conversation.dialectId?.let { Dialect.fromId(it) },
+            "en"
+        ) ?: return turns
+        val last = turns.indexOfLast { it.role == "user" }
+        if (last < 0) return turns
+        val text = turns[last].content.textContent()
+        if (BuildConfig.DEBUG) android.util.Log.d("MaskanCtx", "reminder<<" + reminder + ">>")
+        return turns.toMutableList().also {
+            it[last] = Message(role = "user", text = reminder + "\n\n" + text)
+        }
     }
 
     /**
@@ -1818,7 +1875,7 @@ class ChatRepository(
                 " msgs=" + messages.size + " systems=" + system.size +
                 " imgs=" + messages.count { it.content is MessageContent.WithImage } +
                 " sysTokens=" + TokenEstimate.of(systemText) +
-                " voiceTokens=" + TokenEstimate.of(dialectVoice()) +
+                " voiceTokens=" + TokenEstimate.of(dialectVoice(conversation)) +
                 " roles=" + messages.joinToString(",") { it.role }
         )
         if (systemText.isNotEmpty()) {

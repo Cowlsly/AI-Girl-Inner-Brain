@@ -26,6 +26,20 @@ data class SystemPromptPreset(
     val icon: String
 )
 
+/**
+ * The system text to send when the app is speaking [language] - pass the EFFECTIVE language
+ * (ChatRepository.effectiveLanguage), not LocaleRepository.getLocale().
+ *
+ * Until 2.6.1 every caller asked `getLocale() == "ar"` and chose between Ar and En only, so the
+ * Thai text was never sent to anyone, and an Arabic-phone user who had never opened the language
+ * setting - getLocale() is "" for them - got the English text.
+ */
+fun SystemPromptPreset.systemPromptFor(language: String): String = when {
+    language == "th" && systemPromptTh.isNotBlank() -> systemPromptTh
+    language == "ar" -> systemPromptAr
+    else -> systemPromptEn
+}
+
 @Composable
 fun SystemPromptPreset.localizedName(): String = when {
     isAppThai() && nameTh.isNotEmpty() -> nameTh

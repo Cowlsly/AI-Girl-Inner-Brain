@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import app.maskan.chat.MaskanApplication
+import app.maskan.chat.data.local.Presets
+import app.maskan.chat.data.local.systemPromptFor
+import app.maskan.chat.data.model.Dialect
 import app.maskan.chat.ondevice.LocalPrompt
 import app.maskan.chat.ondevice.ModelCatalog
 import app.maskan.chat.util.TokenEstimate
@@ -79,6 +82,42 @@ class LlmProbeReceiver : BroadcastReceiver() {
             " window=" + model.contextTokens)
 
         val engine = app.llmEngine
+
+        // Translation mode (2.6.1): --es preset <id> [--es dialect <id>] [--es lang en|ar|th]
+        // [--ef temp <t>] --ei runs <n>. Builds the request from the SAME Presets functions the
+        // app uses - system text + reminder on the user turn - and generates n times, because at
+        // temperature 0.7 one reply ranks nothing. Run ONE job at a time with the app in the
+        // foreground: MIUI kills a backgrounded app mid-run, and the noisy log rotates lines out,
+        // so stream logcat to a file rather than reading -d afterwards.
+        val presetId = intent.getStringExtra("preset")
+        if (presetId != null) {
+            val dialect = intent.getStringExtra("dialect")?.let { Dialect.fromId(it) }
+            val lang = intent.getStringExtra("lang") ?: "en"
+            val runs = intent.getIntExtra("runs", 5)
+            val preset = Presets.getById(presetId, dialect ?: Dialect.MSA) ?: run {
+                Log.w(TAG, "no preset " + presetId)
+                return
+            }
+            val sys = preset.systemPromptFor(lang)
+            val reminder = Presets.translationReminder(presetId, dialect, lang)
+            val m = if (intent.hasExtra("temp")) {
+                model.copy(temperature = intent.getFloatExtra("temp", model.temperature))
+            } else model
+            val turns = listOf(LocalPrompt.Turn("user", reminder + "\n\n" + prompt))
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                engine.ensureLoaded(m)
+                repeat(runs) { i ->
+                    val out = StringBuilder()
+                    engine.generate(m, sys, turns).collect { out.append(it) }
+                    Log.d(TAG, "TR temp=" + m.temperature + " run=" + i +
+                        " preset=" + presetId + " lang=" + lang + " OUT<<" +
+                        out.toString().replace("\n", " / ") + ">>")
+                }
+                Log.d(TAG, "TR DONE")
+            }
+            return
+        }
+
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             val loadStart = System.currentTimeMillis()
             try {

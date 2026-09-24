@@ -35,6 +35,25 @@
 # a dependency measured while unreachable has not been measured.
 -dontwarn com.google.auto.value.**
 
+# MediaPipe ships NO consumer rules, and the -dontwarn above only lets R8 finish; it keeps
+# nothing. 2.6.0 shipped like that, and the Play build failed to load the on-device model on a
+# Redmi Note 15 Pro; an R8 build of the same commit failed identically there, and nothing in the
+# failure depends on the phone:
+#
+#   RuntimeException: Field modelPath_ for a3.g not found
+#
+# The load options are a protobuf-lite message, and protobuf-lite finds its fields BY NAME at
+# runtime; R8 had renamed them. The debug build has no R8, so every on-device test passed on
+# debug and the store build never ran once. MediaPipe's native side also calls back into its Java
+# classes by name (session callbacks, LlmTaskRunner), so the whole package is kept, not only the
+# class that failed first.
+-keep class * extends com.google.protobuf.GeneratedMessageLite { <fields>; }
+-keep class com.google.mediapipe.** { *; }
+# Keeping the whole package makes R8 read LlmTaskRunner.createImage, which names MPImage classes
+# that live in a separate artifact tasks-genai does not pull in. Maskan never hands the on-device
+# model an image (setMaxNumImages(0), vision modality off), so that path is never reached.
+-dontwarn com.google.mediapipe.framework.image.**
+
 # Keep Retrofit interfaces
 -keep,allowobfuscation interface app.maskan.chat.data.remote.OpenAiCompatibleService
 -keep,allowobfuscation interface app.maskan.chat.data.remote.AnthropicService
